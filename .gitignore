@@ -1,0 +1,9 @@
+m3u8-down
+build/*.so
+build/*.h
+build/*.deb
+build/m3u8-down-*
+gui/build/
+gui/.dart_tool/
+gui/.packages
+gui/pubspec.lock
