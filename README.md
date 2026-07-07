@@ -14,6 +14,7 @@
 - GUI：PyQt6 下载界面、设置对话框、多桌面样式适配、后台下载线程
 - TUI：Textual 终端界面，支持下载和启动流播代理
 - 流播代理：aiohttp 本地代理，动态过滤 m3u8 广告片段并转发 TS
+- Android：包名 `com.dai2010.m3u8down`，最低 Android 10，优先产出 APK
 
 旧 Go/Flutter 代码已删除，当前仓库是 Python 重写版。
 
@@ -62,4 +63,15 @@ sudo apt install ffmpeg
 
 ```bash
 python3 -m pytest tests
+```
+
+## 发布产物
+
+APK/AAB 与 deb/dpkg 包不提交到仓库。构建产物只在发布版本时作为 GitHub Release assets 上传。
+
+Android debug APK 构建示例：
+
+```bash
+cd android
+ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8.10.2/bin/gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1
 ```
