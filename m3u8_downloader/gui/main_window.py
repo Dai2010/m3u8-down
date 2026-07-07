@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import asyncio
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -23,6 +24,7 @@ from ..config.manager import load_config
 from ..core.downloader import Downloader
 from ..core.filter import filter_playlist
 from ..core.merger import merge_to_mp4
+from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
 from .settings_dialog import SettingsDialog
@@ -74,6 +76,48 @@ class DownloadWorker(QThread):
                 shutil.rmtree(work_dir)
 
 
+class ProxyWorker(QThread):
+    started_url = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, url: str, config: dict, parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.config = config
+        self.server: ProxyServer | None = None
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.stop_event: asyncio.Event | None = None
+
+    def run(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_until_complete(self._run())
+
+    def stop(self) -> None:
+        if self.loop and self.stop_event:
+            self.loop.call_soon_threadsafe(self.stop_event.set)
+
+    async def _run(self) -> None:
+        try:
+            headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
+            self.server = ProxyServer(
+                port=int(self.config.get("proxy_port", 8888)),
+                headers=headers,
+                filter_keywords=self.config.get("filter_keywords", []),
+            )
+            await self.server.start()
+            self.started_url.emit(self.server.get_stream_url(self.url))
+            self.stop_event = asyncio.Event()
+            await self.stop_event.wait()
+        except Exception as exc:  # noqa: BLE001 - show concise GUI error.
+            self.failed.emit(str(exc))
+        finally:
+            if self.server:
+                await self.server.stop()
+            if self.loop:
+                self.loop.close()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -81,6 +125,7 @@ class MainWindow(QMainWindow):
         self.resize(820, 560)
         self.config = load_config()
         self.worker: DownloadWorker | None = None
+        self.proxy_worker: ProxyWorker | None = None
 
         self.url = QLineEdit()
         self.url.setPlaceholderText("https://example.com/video/index.m3u8")
@@ -109,11 +154,19 @@ class MainWindow(QMainWindow):
         self.settings_button = QPushButton("Settings")
         self.settings_button.setObjectName("secondary")
         self.settings_button.clicked.connect(self._open_settings)
+        self.proxy_button = QPushButton("Start Proxy")
+        self.proxy_button.clicked.connect(self._start_proxy)
+        self.stop_proxy_button = QPushButton("Stop Proxy")
+        self.stop_proxy_button.setObjectName("secondary")
+        self.stop_proxy_button.setEnabled(False)
+        self.stop_proxy_button.clicked.connect(self._stop_proxy)
 
         controls = QHBoxLayout()
         controls.addWidget(self.start_button)
         controls.addWidget(self.stop_button)
         controls.addWidget(self.settings_button)
+        controls.addWidget(self.proxy_button)
+        controls.addWidget(self.stop_proxy_button)
         controls.addStretch(1)
 
         self.progress = QProgressBar()
@@ -159,6 +212,38 @@ class MainWindow(QMainWindow):
             self.worker.cancel()
             self._append_log("Stopping after current network operation")
             self.stop_button.setEnabled(False)
+
+    def _start_proxy(self) -> None:
+        url = self.url.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Missing URL", "Enter an m3u8 URL.")
+            return
+        headers = self.config.setdefault("headers", {})
+        headers["Referer"] = self.referer.text().strip()
+        self.proxy_button.setEnabled(False)
+        self.stop_proxy_button.setEnabled(True)
+        self.proxy_worker = ProxyWorker(url, self.config, self)
+        self.proxy_worker.started_url.connect(self._proxy_started)
+        self.proxy_worker.failed.connect(self._proxy_failed)
+        self.proxy_worker.start()
+
+    def _stop_proxy(self) -> None:
+        if self.proxy_worker:
+            self.proxy_worker.stop()
+            self.proxy_worker = None
+        self.proxy_button.setEnabled(True)
+        self.stop_proxy_button.setEnabled(False)
+        self._append_log("Proxy stopped")
+
+    def _proxy_started(self, proxy_url: str) -> None:
+        self._append_log(f"Proxy URL: {proxy_url}")
+        self.status.setText("Proxy running")
+
+    def _proxy_failed(self, message: str) -> None:
+        self._append_log(f"Proxy failed: {message}")
+        self.proxy_button.setEnabled(True)
+        self.stop_proxy_button.setEnabled(False)
+        QMessageBox.critical(self, "Proxy failed", message)
 
     def _update_progress(self, done: int, total: int) -> None:
         value = int(done / total * 100) if total else 100
