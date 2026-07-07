@@ -8,7 +8,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -23,6 +28,8 @@ import androidx.media3.ui.PlayerView
 @Composable
 fun PlayerScreen(url: String, referer: String, keywords: List<String>, onBack: () -> Unit) {
     val context = LocalContext.current
+    var playbackPosition by rememberSaveable(url) { mutableLongStateOf(0L) }
+    var shouldPlay by rememberSaveable(url) { mutableStateOf(true) }
     val player = remember(url, referer, keywords) {
         val httpFactory = DefaultHttpDataSource.Factory()
         if (referer.isNotBlank()) httpFactory.setDefaultRequestProperties(mapOf("Referer" to referer))
@@ -31,11 +38,16 @@ fun PlayerScreen(url: String, referer: String, keywords: List<String>, onBack: (
         ExoPlayer.Builder(context).build().apply {
             setMediaSource(mediaSource)
             prepare()
-            playWhenReady = true
+            seekTo(playbackPosition)
+            playWhenReady = shouldPlay
         }
     }
     DisposableEffect(player) {
-        onDispose { player.release() }
+        onDispose {
+            playbackPosition = player.currentPosition
+            shouldPlay = player.playWhenReady
+            player.release()
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

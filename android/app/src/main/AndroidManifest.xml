@@ -8,6 +8,7 @@
         android:theme="@style/AppTheme">
         <activity
             android:name="com.dai2010.m3u8down.MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
