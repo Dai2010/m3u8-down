@@ -1,35 +1,20 @@
-BINARY=m3u8-down
-VERSION=$(shell git describe --tags 2>/dev/null || echo "dev")
+PYTHON=python3
 
-all: build
-
-build:
-	go build -o $(BINARY) ./cmd/m3u8-down/
+all: test
 
 test:
-	go test ./... -v
+	$(PYTHON) -m pytest tests
 
-test-short:
-	go test ./... -short
+python-test:
+	$(PYTHON) -m pytest tests
 
 fmt:
-	go fmt ./...
+	$(PYTHON) -m compileall m3u8_downloader tests
 
-vet:
-	go vet ./...
+run:
+	$(PYTHON) -m m3u8_downloader.main
 
 clean:
-	rm -f $(BINARY) build/$(BINARY)-*
+	rm -rf .pytest_cache build dist *.egg-info
 
-run: build
-	./$(BINARY)
-
-cross:
-	GOOS=linux GOARCH=amd64 go build -o build/$(BINARY)-linux-amd64 ./cmd/m3u8-down/
-	GOOS=linux GOARCH=arm64 go build -o build/$(BINARY)-linux-arm64 ./cmd/m3u8-down/
-
-so:
-	GOOS=linux GOARCH=amd64 go build -o build/libm3u8_engine.so -buildmode=c-shared ./pkg/
-	GOOS=linux GOARCH=arm64 go build -o build/libm3u8_engine-arm64.so -buildmode=c-shared ./pkg/
-
-.PHONY: all build test test-short fmt vet clean run cross so
+.PHONY: all test python-test fmt run clean

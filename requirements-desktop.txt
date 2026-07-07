@@ -1,0 +1,4 @@
+-r requirements.txt
+aiohttp>=3.9.0
+textual>=0.80.0
+PyQt6>=6.6.0
