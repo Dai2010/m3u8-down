@@ -11,6 +11,7 @@
 - 合并器：调用 FFmpeg concat list 合并为 MP4
 - 配置：XDG 路径 `~/.config/m3u8-downloader/config.json`
 - CLI：支持主播放列表自动选择最高码率、指定变体、导出过滤后的 m3u8、下载进度
+- GUI：PyQt6 下载界面、设置对话框、多桌面样式适配、后台下载线程
 
 旧 Go/Flutter 代码已删除，当前仓库是 Python 重写版。
 
@@ -21,6 +22,13 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 python -m m3u8_downloader "https://example.com/video/index.m3u8" -o video.mp4
+```
+
+桌面 GUI：
+
+```bash
+pip install -r requirements-desktop.txt
+python -m m3u8_downloader.gui.app
 ```
 
 常用参数：

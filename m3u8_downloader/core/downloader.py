@@ -9,6 +9,7 @@ import requests
 from .parser import Segment
 
 ProgressCallback = Callable[[int, int], None]
+CancelCallback = Callable[[], bool]
 
 
 class DownloadError(RuntimeError):
@@ -27,6 +28,7 @@ class Downloader:
         segments: list[Segment],
         output_dir: Path,
         progress_callback: Optional[ProgressCallback] = None,
+        cancel_callback: Optional[CancelCallback] = None,
     ) -> list[Path]:
         output_dir.mkdir(parents=True, exist_ok=True)
         total = len(segments)
@@ -36,7 +38,7 @@ class Downloader:
 
         with ThreadPoolExecutor(max_workers=self.threads) as executor:
             futures = {
-                executor.submit(self._download_one, index, segment, output_dir): index
+                executor.submit(self._download_one, index, segment, output_dir, cancel_callback): index
                 for index, segment in enumerate(segments)
             }
             for future in as_completed(futures):
@@ -53,7 +55,7 @@ class Downloader:
             raise DownloadError("failed to download segments: " + "; ".join(failures))
         return [path for path in results if path is not None]
 
-    def _download_one(self, index: int, segment: Segment, output_dir: Path) -> Path:
+    def _download_one(self, index: int, segment: Segment, output_dir: Path, cancel_callback: Optional[CancelCallback]) -> Path:
         final_path = output_dir / f"{index:05d}.ts"
         part_path = output_dir / f"{index:05d}.ts.part"
         if final_path.exists() and final_path.stat().st_size > 0:
@@ -61,11 +63,15 @@ class Downloader:
 
         last_error: Optional[Exception] = None
         for _ in range(self.retries + 1):
+            if cancel_callback and cancel_callback():
+                raise DownloadError("download cancelled")
             try:
                 with requests.get(segment.url, headers=self.headers, stream=True, timeout=self.timeout) as response:
                     response.raise_for_status()
                     with part_path.open("wb") as file_obj:
                         for chunk in response.iter_content(chunk_size=1024 * 256):
+                            if cancel_callback and cancel_callback():
+                                raise DownloadError("download cancelled")
                             if chunk:
                                 file_obj.write(chunk)
                 part_path.replace(final_path)
