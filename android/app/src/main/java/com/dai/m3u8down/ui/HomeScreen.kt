@@ -62,8 +62,10 @@ fun HomeScreen() {
     var screen by rememberSaveable { mutableStateOf("home") }
     var url by rememberSaveable { mutableStateOf("") }
     var referer by rememberSaveable { mutableStateOf("") }
-    var adFilterEnabled by rememberSaveable { mutableStateOf(false) }
-    var keywords by rememberSaveable { mutableStateOf("adjump\nad\nbanner") }
+    var streamAdFilterEnabled by rememberSaveable { mutableStateOf(false) }
+    var streamKeywords by rememberSaveable { mutableStateOf("adjump\nad\nbanner") }
+    var downloadAdFilterEnabled by rememberSaveable { mutableStateOf(false) }
+    var downloadKeywords by rememberSaveable { mutableStateOf("adjump\nad\nbanner") }
     var outputName by rememberSaveable { mutableStateOf("video.mp4") }
     var threadText by rememberSaveable { mutableStateOf("8") }
     var downloadTreeUri by rememberSaveable { mutableStateOf("") }
@@ -86,10 +88,10 @@ fun HomeScreen() {
             onUrlChange = { url = it },
             referer = referer,
             onRefererChange = { referer = it },
-            adFilterEnabled = adFilterEnabled,
-            onAdFilterEnabledChange = { adFilterEnabled = it },
-            keywords = keywords,
-            onKeywordsChange = { keywords = it },
+            adFilterEnabled = streamAdFilterEnabled,
+            onAdFilterEnabledChange = { streamAdFilterEnabled = it },
+            keywords = streamKeywords,
+            onKeywordsChange = { streamKeywords = it },
             onPlay = { screen = "player" },
             onBack = { screen = "home" },
         )
@@ -98,10 +100,10 @@ fun HomeScreen() {
             onUrlChange = { url = it },
             referer = referer,
             onRefererChange = { referer = it },
-            adFilterEnabled = adFilterEnabled,
-            onAdFilterEnabledChange = { adFilterEnabled = it },
-            keywords = keywords,
-            onKeywordsChange = { keywords = it },
+            adFilterEnabled = downloadAdFilterEnabled,
+            onAdFilterEnabledChange = { downloadAdFilterEnabled = it },
+            keywords = downloadKeywords,
+            onKeywordsChange = { downloadKeywords = it },
             outputName = outputName,
             onOutputNameChange = { outputName = it },
             threadText = threadText,
@@ -124,7 +126,7 @@ fun HomeScreen() {
                         }
                         val cache = File(context.cacheDir, "segments")
                         val threads = threadText.toIntOrNull()?.coerceIn(1, 64) ?: 8
-                        val filterWords = if (adFilterEnabled) keywords.lines().filter { it.isNotBlank() } else emptyList()
+                        val filterWords = if (downloadAdFilterEnabled) downloadKeywords.lines().filter { it.isNotBlank() } else emptyList()
                         finalOutput.parentFile?.mkdirs()
                         manager.download(url, finalOutput, cache, headers, filterWords, threads).collect { update ->
                             status = update.message
@@ -144,8 +146,8 @@ fun HomeScreen() {
         "player" -> PlayerScreen(
             url = url,
             referer = referer,
-            adFilterEnabled = adFilterEnabled,
-            keywords = keywords.lines().filter { it.isNotBlank() },
+            adFilterEnabled = streamAdFilterEnabled,
+            keywords = streamKeywords.lines().filter { it.isNotBlank() },
             onBack = { screen = "stream" },
         )
         else -> DirectoryScreen(onStream = { screen = "stream" }, onDownload = { screen = "download" })
@@ -166,7 +168,7 @@ private fun DirectoryScreen(onStream: () -> Unit, onDownload: () -> Unit) {
             Text("m3u8 Downloader", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("选择要做的事情", color = MaterialTheme.colorScheme.onSurfaceVariant)
             EntryCard(title = "流播", description = "直接播放 m3u8，可按需开启去广告过滤。", icon = Icons.Default.PlayArrow, onClick = onStream)
-            EntryCard(title = "下载", description = "保存为 MP4，支持自选目录和并发线程数。", icon = Icons.Default.Download, onClick = onDownload)
+            EntryCard(title = "下载", description = "保存为 MP4，可按需开启去广告过滤。", icon = Icons.Default.Download, onClick = onDownload)
         }
     }
 }

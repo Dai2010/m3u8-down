@@ -263,7 +263,7 @@ class MainWindow(QMainWindow):
         stream = QPushButton("流播\n直接播放 m3u8，可按需开启去广告过滤。")
         stream.setObjectName("entry")
         stream.clicked.connect(lambda: self.stack.setCurrentWidget(self.stream_page))
-        download = QPushButton("下载\n保存为 MP4，支持自选目录和并发线程数。")
+        download = QPushButton("下载\n保存为 MP4，可按需开启去广告过滤。")
         download.setObjectName("entry")
         download.clicked.connect(lambda: self.stack.setCurrentWidget(self.download_page))
         layout.addWidget(stream)
