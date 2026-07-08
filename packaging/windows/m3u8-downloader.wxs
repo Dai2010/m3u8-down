@@ -4,8 +4,8 @@
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
     <MediaTemplate EmbedCab="yes" />
-    <Icon Id="AppIcon" SourceFile="$(var.IconFile)" />
-    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Icon Id="AppIcon.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <UIRef Id="WixUI_InstallDir" />
 
@@ -14,7 +14,7 @@
         <Directory Id="INSTALLFOLDER" Name="m3u8 Downloader">
           <Component Id="ApplicationFiles" Guid="d95fd5ff-8493-48b4-825d-5bcf639f0799">
             <File Id="AppExe" Source="$(var.SourceExe)" KeyPath="yes" />
-            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="m3u8 Downloader" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" Advertise="yes" />
+            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="m3u8 Downloader" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="yes" />
           </Component>
         </Directory>
       </Directory>

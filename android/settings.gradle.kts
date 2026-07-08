@@ -5,6 +5,7 @@ pluginManagement {
             google()
             mavenCentral()
             gradlePluginPortal()
+            maven("https://maven.aliyun.com/repository/public")
         } else {
             maven("https://maven.aliyun.com/repository/google")
             maven("https://maven.aliyun.com/repository/gradle-plugin")
@@ -23,6 +24,7 @@ dependencyResolutionManagement {
         if (useOfficialRepos) {
             google()
             mavenCentral()
+            maven("https://maven.aliyun.com/repository/public")
         } else {
             maven("https://maven.aliyun.com/repository/google")
             maven("https://maven.aliyun.com/repository/public")
