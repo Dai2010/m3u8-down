@@ -32,7 +32,8 @@ def _configure_desktop(app: QApplication) -> None:
     elif "kde" in desktop:
         QIcon.setThemeName("breeze")
 
-    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    color_scheme = getattr(app.styleHints(), "colorScheme", None)
+    is_dark = bool(color_scheme and color_scheme() == Qt.ColorScheme.Dark)
     app.setStyleSheet(stylesheet(is_dark))
 
 
