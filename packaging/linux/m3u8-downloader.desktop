@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=m3u8 Downloader
+Comment=Download and stream m3u8 playlists
+Exec=m3u8-downloader-gui
+Icon=m3u8-downloader
+Terminal=false
+Categories=AudioVideo;Network;
+Keywords=m3u8;hls;video;download;stream;
