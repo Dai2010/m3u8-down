@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.2.0
+        required: true
+        default: v0.2.0
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux-android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Install Linux packaging tools
+        run: sudo apt-get update && sudo apt-get install -y imagemagick dpkg-dev
+      - name: Build Android APK
+        working-directory: android
+        run: gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1
+      - name: Build deb
+        run: bash packaging/linux/build_deb.sh 0.2.0
+      - name: Collect assets
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk dist/m3u8-downloader-android-arm64-v8a-debug.apk
+          cp build/release/m3u8-downloader_0.2.0_amd64.deb dist/
+          sha256sum dist/* > dist/SHA256SUMS-linux-android.txt
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/*
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-desktop.txt pyinstaller pillow
+      - name: Prepare icon
+        shell: python
+        run: |
+          from PIL import Image
+          image = Image.open("packaging/assets/m3u8-downloader.png")
+          image.save("packaging/assets/m3u8-downloader.ico", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+      - name: Build exe
+        run: pyinstaller --name m3u8-downloader --onefile --windowed --icon packaging/assets/m3u8-downloader.ico -m m3u8_downloader.gui.app
+      - name: Install WiX Toolset
+        run: choco install wixtoolset --no-progress -y
+      - name: Build msi
+        shell: cmd
+        run: |
+          candle -dSourceExe=dist\m3u8-downloader.exe -dIconFile=packaging\assets\m3u8-downloader.ico packaging\windows\m3u8-downloader.wxs -out dist\m3u8-downloader.wixobj
+          light -ext WixUIExtension -out dist\m3u8-downloader-0.2.0-windows-x64.msi dist\m3u8-downloader.wixobj
+      - name: Collect assets
+        shell: bash
+        run: |
+          mv dist/m3u8-downloader.exe dist/m3u8-downloader-0.2.0-windows-x64.exe
+          sha256sum dist/m3u8-downloader-0.2.0-windows-x64.exe dist/m3u8-downloader-0.2.0-windows-x64.msi > dist/SHA256SUMS-windows.txt
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            dist/m3u8-downloader-0.2.0-windows-x64.exe
+            dist/m3u8-downloader-0.2.0-windows-x64.msi
+            dist/SHA256SUMS-windows.txt

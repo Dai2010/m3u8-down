@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="0.2.0" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="AppIcon" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <UIRef Id="WixUI_InstallDir" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="m3u8 Downloader">
+          <Component Id="ApplicationFiles" Guid="d95fd5ff-8493-48b4-825d-5bcf639f0799">
+            <File Id="AppExe" Source="$(var.SourceExe)" KeyPath="yes" />
+            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="m3u8 Downloader" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" Advertise="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <Feature Id="DefaultFeature" Title="m3u8 Downloader" Level="1">
+      <ComponentRef Id="ApplicationFiles" />
+    </Feature>
+  </Product>
+</Wix>
