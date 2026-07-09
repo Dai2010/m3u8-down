@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="0.3.0" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
+  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="0.3.1" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
     <MediaTemplate EmbedCab="yes" />
@@ -14,15 +14,21 @@
         <Directory Id="INSTALLFOLDER" Name="m3u8 Downloader">
           <Component Id="ApplicationFiles" Guid="d95fd5ff-8493-48b4-825d-5bcf639f0799">
             <File Id="AppExe" Source="$(var.SourceExe)" KeyPath="yes" />
-            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="m3u8 Downloader" Target="[#AppExe]" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="no" />
           </Component>
         </Directory>
       </Directory>
-      <Directory Id="ProgramMenuFolder" />
+      <Directory Id="ProgramMenuFolder">
+        <Component Id="StartMenuShortcutComponent" Guid="9719e432-3c4b-4454-ae54-c181309ea4d7">
+          <Shortcut Id="StartMenuShortcut" Name="m3u8 Downloader" Target="[#AppExe]" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="no" />
+          <RemoveFolder Id="RemoveProgramMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\Dai2010\m3u8 Downloader" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
     </Directory>
 
     <Feature Id="DefaultFeature" Title="m3u8 Downloader" Level="1">
       <ComponentRef Id="ApplicationFiles" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
     </Feature>
   </Product>
 </Wix>
