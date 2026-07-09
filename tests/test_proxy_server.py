@@ -10,7 +10,10 @@ def test_proxy_stream_filters_ad_segments():
         async def playlist(request):
             return web.Response(
                 text="""#EXTM3U
+#EXT-X-VERSION:7
 #EXT-X-TARGETDURATION:8
+#EXT-X-MAP:URI="init.mp4"
+#EXT-X-KEY:METHOD=AES-128,URI="key.bin"
 #EXTINF:8,
 video.ts
 #EXTINF:8,
@@ -45,6 +48,10 @@ ad.ts
                 assert "/ts?src=" in text
                 assert "video.ts" in text
                 assert "ad.ts" not in text
+                assert "#EXT-X-MAP:" in text
+                assert "init.mp4" in text
+                assert "#EXT-X-KEY:" in text
+                assert "key.bin" in text
         finally:
             await proxy.stop()
             await source_runner.cleanup()

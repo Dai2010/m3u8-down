@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="0.2.1" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
+  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="0.3.0" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
     <MediaTemplate EmbedCab="yes" />
@@ -14,7 +14,7 @@
         <Directory Id="INSTALLFOLDER" Name="m3u8 Downloader">
           <Component Id="ApplicationFiles" Guid="d95fd5ff-8493-48b4-825d-5bcf639f0799">
             <File Id="AppExe" Source="$(var.SourceExe)" KeyPath="yes" />
-            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="m3u8 Downloader" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="yes" />
+            <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="m3u8 Downloader" Target="[#AppExe]" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="no" />
           </Component>
         </Directory>
       </Directory>

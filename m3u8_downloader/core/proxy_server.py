@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from urllib.parse import quote, unquote
 
 from aiohttp import ClientSession, web
 
-from .filter import filter_playlist, is_ad_segment
-from .parser import Segment, parse_playlist, playlist_to_m3u8
+from .filter import is_ad_segment
+from .parser import Segment, parse_playlist, resolve_url
 
 
 class ProxyServer:
@@ -70,15 +71,10 @@ class ProxyServer:
 
         playlist = parse_playlist(content, source)
         if playlist.is_master:
-            return web.Response(text=self._proxy_master_playlist(playlist), content_type="application/vnd.apple.mpegurl")
-
-        for segment in playlist.segments:
-            if is_ad_segment(segment, self.filter_keywords, self.use_regex):
-                self._ad_urls.add(segment.url)
-        filtered = filter_playlist(playlist, self.filter_keywords, self.use_regex)
-        proxied_segments = [self._proxied_segment(segment) for segment in filtered.segments]
-        filtered = filtered.with_segments(proxied_segments)
-        return web.Response(text=playlist_to_m3u8(filtered), content_type="application/vnd.apple.mpegurl")
+            text = self._proxy_master_playlist(content, source)
+        else:
+            text = self._proxy_media_playlist(content, source, playlist.segments)
+        return web.Response(text=text, content_type="application/vnd.apple.mpegurl")
 
     async def _handle_ts(self, request: web.Request) -> web.StreamResponse:
         source = request.query.get("src")
@@ -98,11 +94,69 @@ class ProxyServer:
             await response.write_eof()
             return response
 
-    def _proxy_master_playlist(self, playlist) -> str:
-        variants = []
-        for variant in playlist.variants:
-            variants.append(type(variant)(variant.bandwidth, variant.resolution, variant.codecs, self.get_stream_url(variant.url)))
-        return playlist_to_m3u8(playlist.__class__(version=playlist.version, is_master=True, variants=variants))
+    def _proxy_master_playlist(self, content: str, base_url: str) -> str:
+        output: list[str] = []
+        pending_variant = False
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if pending_variant and not line.startswith("#"):
+                output.append(self.get_stream_url(resolve_url(base_url, line)))
+                pending_variant = False
+            elif line.startswith("#EXT-X-STREAM-INF:"):
+                output.append(self._rewrite_tag_uris(line, base_url, stream=True))
+                pending_variant = True
+            else:
+                output.append(self._rewrite_tag_uris(line, base_url, stream=True) if line.startswith("#") else line)
+        return "\n".join(output) + "\n"
+
+    def _proxy_media_playlist(self, content: str, base_url: str, segments: list[Segment]) -> str:
+        output: list[str] = []
+        pending_segment_tags: list[str] = []
+        pending_title = ""
+        segment_index = 0
+        has_endlist = False
+
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line == "#EXTM3U":
+                output.append(line)
+            elif line == "#EXT-X-ENDLIST":
+                has_endlist = True
+            elif line.startswith("#EXTINF:"):
+                pending_segment_tags.append(line)
+                pending_title = line.partition(",")[2].strip()
+            elif _is_segment_scoped_tag(line):
+                pending_segment_tags.append(self._rewrite_tag_uris(line, base_url))
+            elif line.startswith("#"):
+                output.append(self._rewrite_tag_uris(line, base_url))
+            else:
+                absolute_url = resolve_url(base_url, line)
+                segment = segments[segment_index] if segment_index < len(segments) else Segment(0, absolute_url, pending_title)
+                segment_index += 1
+                if is_ad_segment(segment, self.filter_keywords, self.use_regex):
+                    self._ad_urls.add(segment.url)
+                else:
+                    output.extend(pending_segment_tags)
+                    output.append(self._proxied_segment(segment).url)
+                pending_segment_tags = []
+                pending_title = ""
+
+        if has_endlist:
+            output.append("#EXT-X-ENDLIST")
+        return "\n".join(output) + "\n"
+
+    def _rewrite_tag_uris(self, line: str, base_url: str, stream: bool = False) -> str:
+        def replace(match: re.Match[str]) -> str:
+            target = resolve_url(base_url, match.group(1))
+            if stream and line.startswith(("#EXT-X-I-FRAME-STREAM-INF", "#EXT-X-MEDIA")):
+                target = self.get_stream_url(target)
+            return f'URI="{target}"'
+
+        return re.sub(r'URI="([^"]+)"', replace, line)
 
     def _proxied_segment(self, segment: Segment) -> Segment:
         url = f"http://{self.host}:{self.port}/ts?src={quote(segment.url, safe='')}"
@@ -125,3 +179,17 @@ def run_proxy_until_stopped(server: ProxyServer, original_url: str) -> None:
             await server.stop()
 
     asyncio.run(runner())
+
+
+def _is_segment_scoped_tag(line: str) -> bool:
+    return line == "#EXT-X-DISCONTINUITY" or line.startswith(
+        (
+            "#EXT-X-BYTERANGE",
+            "#EXT-X-PROGRAM-DATE-TIME",
+            "#EXT-X-DATERANGE",
+            "#EXT-X-GAP",
+            "#EXT-X-MAP",
+            "#EXT-X-PART",
+            "#EXT-X-PRELOAD-HINT",
+        )
+    )

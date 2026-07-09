@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import shutil
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QStackedWidget,
     QTextEdit,
@@ -23,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..config.manager import load_config
+from ..config.manager import DEFAULT_PROFILE, load_config, load_profiles, save_profiles
 from ..core.downloader import Downloader
 from ..core.filter import filter_playlist
 from ..core.merger import merge_to_mp4
@@ -31,6 +38,13 @@ from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
 from .settings_dialog import SettingsDialog
+from .windows_dependencies import ensure_ffmpeg as ensure_windows_ffmpeg
+
+
+@dataclass
+class DownloadTask:
+    url: str
+    output_name: str
 
 
 class DownloadWorker(QThread):
@@ -39,10 +53,10 @@ class DownloadWorker(QThread):
     failed = pyqtSignal(str)
     completed = pyqtSignal(str)
 
-    def __init__(self, url: str, output: Path, config: dict, parent=None):
+    def __init__(self, tasks: list[DownloadTask], output_dir: Path, config: dict, parent=None):
         super().__init__(parent)
-        self.url = url
-        self.output = output
+        self.tasks = tasks
+        self.output_dir = output_dir
         self.config = config
         self._cancelled = False
 
@@ -50,33 +64,40 @@ class DownloadWorker(QThread):
         self._cancelled = True
 
     def run(self) -> None:
-        work_dir = self.output.with_suffix("")
+        work_root = self.output_dir / ".m3u8-downloader-segments"
         try:
             headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
             keywords = self.config.get("filter_keywords", [])
             threads = int(self.config.get("threads", 16))
 
             require_ffmpeg()
-            self.log.emit("Loading playlist")
-            playlist = _load_media_playlist(self.url, headers)
-            filtered = filter_playlist(playlist, keywords)
-            if not filtered.segments:
-                raise RuntimeError("no playable segments after filtering")
+            for task_index, task in enumerate(self.tasks, start=1):
+                if self._cancelled:
+                    raise RuntimeError("download cancelled")
+                output = self.output_dir / task.output_name
+                work_dir = work_root / str(task_index)
+                self.log.emit(f"[{task_index}/{len(self.tasks)}] Loading playlist")
+                playlist = _load_media_playlist(task.url, headers)
+                filtered = filter_playlist(playlist, keywords)
+                if not filtered.segments:
+                    raise RuntimeError("no playable segments after filtering")
 
-            self.log.emit(f"Downloading {len(filtered.segments)} segments")
-            downloader = Downloader(threads=threads, headers=headers)
-            ts_files = downloader.download(filtered.segments, work_dir, self.progress.emit, lambda: self._cancelled)
-            if self._cancelled:
-                raise RuntimeError("download cancelled")
+                self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading {len(filtered.segments)} segments")
+                downloader = Downloader(threads=threads, headers=headers)
+                ts_files = downloader.download(filtered.segments, work_dir, self.progress.emit, lambda: self._cancelled)
+                if self._cancelled:
+                    raise RuntimeError("download cancelled")
 
-            self.log.emit("Merging segments")
-            merge_to_mp4(ts_files, self.output)
-            self.completed.emit(str(self.output))
+                self.log.emit(f"[{task_index}/{len(self.tasks)}] Merging segments")
+                output.parent.mkdir(parents=True, exist_ok=True)
+                merge_to_mp4(ts_files, output)
+                self.log.emit(f"Saved {output}")
+            self.completed.emit(str(self.output_dir))
         except Exception as exc:  # noqa: BLE001 - show concise GUI error.
             self.failed.emit(str(exc))
         finally:
-            if work_dir.exists() and not self._cancelled:
-                shutil.rmtree(work_dir)
+            if work_root.exists() and not self._cancelled:
+                shutil.rmtree(work_root)
 
 
 class ProxyWorker(QThread):
@@ -127,8 +148,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("m3u8 Downloader")
         self.resize(900, 620)
         self.config = load_config()
+        self.profiles = load_profiles(self.config)
+        self.active_profile = self.profiles[0]
         self.worker: DownloadWorker | None = None
         self.proxy_worker: ProxyWorker | None = None
+        self.download_rows: list[tuple[QLineEdit, QLineEdit, QWidget]] = []
 
         self.stack = QStackedWidget()
         self.home_page = self._build_home_page()
@@ -140,11 +164,15 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stack)
 
     def _start_download(self) -> None:
-        url = self.download_url.text().strip()
-        if not url:
-            QMessageBox.warning(self, "Missing URL", "Enter an m3u8 URL.")
+        if not self._choose_download_mode():
             return
-        output = expand_path(self.output.text().strip())
+        tasks = self._download_tasks()
+        if not tasks:
+            QMessageBox.warning(self, "Missing URL", "Add at least one m3u8 URL.")
+            return
+        output_dir = expand_path(self.output.text().strip())
+        if not ensure_windows_ffmpeg(self):
+            return
         config = self._runtime_config(
             self.download_referer.text().strip(),
             self.download_ad_filter.isChecked(),
@@ -155,9 +183,9 @@ class MainWindow(QMainWindow):
         self._set_running(True)
         self.progress.setValue(0)
         self.log.clear()
-        self._append_log("Starting download")
+        self._append_log(f"Starting {len(tasks)} download task(s)")
 
-        self.worker = DownloadWorker(url, output, config, self)
+        self.worker = DownloadWorker(tasks, output_dir, config, self)
         self.worker.progress.connect(self._update_progress)
         self.worker.log.connect(self._append_log)
         self.worker.failed.connect(self._download_failed)
@@ -231,10 +259,69 @@ class MainWindow(QMainWindow):
             self.download_threads.setValue(int(self.config.get("threads", 16)))
             self._append_log("Settings saved")
 
+    def _open_profiles(self) -> None:
+        dialog = ProfileDialog(self.profiles, self)
+        if dialog.exec():
+            self.profiles = dialog.profiles
+            self.config = save_profiles(self.profiles, self.config)
+            self.active_profile = self.profiles[0]
+            self._apply_profile(self.active_profile)
+
+    def _choose_download_mode(self) -> bool:
+        dialog = DownloadModeDialog(self.profiles, self)
+        if not dialog.exec():
+            return False
+        if dialog.selected_profile is not None:
+            self.active_profile = dialog.selected_profile
+            self._apply_profile(self.active_profile)
+        return True
+
     def _choose_output(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Choose output file", self.output.text(), "MP4 Video (*.mp4);;All Files (*)")
+        path = QFileDialog.getExistingDirectory(self, "Choose output directory", self.output.text())
         if path:
             self.output.setText(path)
+
+    def _add_download_row(self, url: str = "", output_name: str = "video.mp4") -> None:
+        row_widget = QWidget()
+        layout = QVBoxLayout(row_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        url_row = QHBoxLayout()
+        url_edit = QLineEdit(url)
+        url_edit.setPlaceholderText("https://example.com/video/index.m3u8")
+        remove = QPushButton("删除")
+        remove.setObjectName("secondary")
+        url_row.addWidget(url_edit)
+        url_row.addWidget(remove)
+        output_edit = QLineEdit(output_name)
+        output_edit.setPlaceholderText("video.mp4")
+        output_edit.setStyleSheet("margin-left: 28px;")
+        layout.addLayout(url_row)
+        layout.addWidget(output_edit)
+        self.download_rows_layout.addWidget(row_widget)
+        self.download_rows.append((url_edit, output_edit, row_widget))
+        remove.clicked.connect(lambda: self._remove_download_row(row_widget))
+
+    def _remove_download_row(self, row_widget: QWidget) -> None:
+        self.download_rows = [row for row in self.download_rows if row[2] is not row_widget]
+        row_widget.setParent(None)
+        row_widget.deleteLater()
+
+    def _download_tasks(self) -> list[DownloadTask]:
+        tasks: list[DownloadTask] = []
+        for index, (url_edit, output_edit, _) in enumerate(self.download_rows, start=1):
+            url = url_edit.text().strip()
+            if not url:
+                continue
+            output_name = output_edit.text().strip() or f"video-{index:03d}.mp4"
+            tasks.append(DownloadTask(url, output_name))
+        return tasks
+
+    def _apply_profile(self, profile: dict) -> None:
+        self.download_ad_filter.setChecked(bool(profile.get("ad_filter", False)))
+        self.download_keywords.setPlainText("\n".join(profile.get("filter_keywords", [])))
+        self.download_threads.setValue(int(profile.get("threads", 16)))
+        self.output.setText(str(expand_path(profile.get("save_dir", "~/Downloads"))))
+        self._sync_filter_visibility()
 
     def _set_running(self, running: bool) -> None:
         self.start_button.setEnabled(not running)
@@ -266,8 +353,16 @@ class MainWindow(QMainWindow):
         download = QPushButton("下载\n保存为 MP4，可按需开启去广告过滤。")
         download.setObjectName("entry")
         download.clicked.connect(lambda: self.stack.setCurrentWidget(self.download_page))
+        profiles = QPushButton("创建配置\n保存过滤、线程、目录和标签，下载前可选择。")
+        profiles.setObjectName("entry")
+        profiles.clicked.connect(self._open_profiles)
+        about = QPushButton("关于\n查看作者主页、项目主页和协议。")
+        about.setObjectName("entry")
+        about.clicked.connect(self._show_about)
         layout.addWidget(stream)
         layout.addWidget(download)
+        layout.addWidget(profiles)
+        layout.addWidget(about)
         layout.addStretch(1)
         return page
 
@@ -320,10 +415,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(12)
         layout.addLayout(self._header_row("下载"))
 
-        self.download_url = QLineEdit()
-        self.download_url.setPlaceholderText("https://example.com/video/index.m3u8")
         self.download_referer = QLineEdit(self.config.get("headers", {}).get("Referer", ""))
-        self.output = QLineEdit(str(expand_path(self.config.get("save_dir", "~/Downloads")) / "video.mp4"))
+        self.output = QLineEdit(str(expand_path(self.active_profile.get("save_dir", self.config.get("save_dir", "~/Downloads")))))
         output_browse = QPushButton("选择")
         output_browse.setObjectName("secondary")
         output_browse.clicked.connect(self._choose_output)
@@ -332,21 +425,29 @@ class MainWindow(QMainWindow):
         output_row.addWidget(output_browse)
         self.download_threads = QSpinBox()
         self.download_threads.setRange(1, 128)
-        self.download_threads.setValue(int(self.config.get("threads", 16)))
+        self.download_threads.setValue(int(self.active_profile.get("threads", self.config.get("threads", 16))))
         self.download_ad_filter = QCheckBox("启用去广告过滤")
+        self.download_ad_filter.setChecked(bool(self.active_profile.get("ad_filter", False)))
         self.download_ad_filter.toggled.connect(self._sync_filter_visibility)
-        self.download_keywords = QTextEdit("\n".join(self.config.get("filter_keywords", [])))
+        self.download_keywords = QTextEdit("\n".join(self.active_profile.get("filter_keywords", self.config.get("filter_keywords", []))))
         self.download_keywords.setFixedHeight(96)
         self.download_keywords_label = QLabel("过滤关键词，每行一个")
+        self.download_rows_layout = QVBoxLayout()
+        add_url = QPushButton("添加 URL")
+        add_url.setObjectName("secondary")
+        add_url.clicked.connect(lambda: self._add_download_row(output_name=f"video-{len(self.download_rows) + 1:03d}.mp4"))
 
         form = QFormLayout()
-        form.addRow("m3u8 地址", self.download_url)
         form.addRow("Referer，可留空", self.download_referer)
-        form.addRow("输出文件", output_row)
+        form.addRow("保存目录", output_row)
         form.addRow("并发线程数", self.download_threads)
         form.addRow("", self.download_ad_filter)
         form.addRow(self.download_keywords_label, self.download_keywords)
         layout.addLayout(form)
+        layout.addWidget(QLabel("下载任务"))
+        layout.addLayout(self.download_rows_layout)
+        layout.addWidget(add_url)
+        self._add_download_row()
 
         self.start_button = QPushButton("开始下载")
         self.start_button.clicked.connect(self._start_download)
@@ -406,3 +507,167 @@ class MainWindow(QMainWindow):
         if threads is not None:
             config["threads"] = threads
         return config
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "关于 m3u8 Downloader",
+            "m3u8 Downloader\n\n"
+            "作者主页：https://github.com/Dai2010\n"
+            "项目主页：https://github.com/Dai2010/m3u8-down\n"
+            "协议：GNU General Public License v3.0",
+        )
+
+
+class DownloadModeDialog(QDialog):
+    def __init__(self, profiles: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("下载方式")
+        self.selected_profile: dict | None = profiles[0] if profiles else None
+        layout = QVBoxLayout(self)
+        self.use_profile = QRadioButton("使用已有配置")
+        self.use_profile.setChecked(bool(profiles))
+        self.guided = QRadioButton("引导式下载")
+        self.combo = QComboBox()
+        self.summary = QLabel()
+        self.summary.setWordWrap(True)
+        self.profiles = profiles
+        for profile in profiles:
+            self.combo.addItem(profile_label(profile))
+        self.combo.currentIndexChanged.connect(self._profile_changed)
+        layout.addWidget(self.use_profile)
+        layout.addWidget(self.combo)
+        layout.addWidget(self.summary)
+        layout.addWidget(self.guided)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._profile_changed(0)
+
+    def accept(self) -> None:
+        self.selected_profile = self.profiles[self.combo.currentIndex()] if self.use_profile.isChecked() and self.profiles else None
+        super().accept()
+
+    def _profile_changed(self, index: int) -> None:
+        if not self.profiles:
+            self.summary.setText("没有已有配置，将使用当前页面内容引导下载。")
+            return
+        self.summary.setText(profile_summary(self.profiles[index]))
+
+
+class ProfileDialog(QDialog):
+    def __init__(self, profiles: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("配置")
+        self.profiles = [profile.copy() for profile in profiles]
+        layout = QHBoxLayout(self)
+        self.list_widget = QListWidget()
+        form_column = QVBoxLayout()
+        self.name = QLineEdit()
+        self.tags = QLineEdit()
+        self.note = QTextEdit()
+        self.note.setFixedHeight(72)
+        self.ad_filter = QCheckBox("启用去广告过滤")
+        self.keywords = QTextEdit()
+        self.keywords.setFixedHeight(96)
+        self.threads = QSpinBox()
+        self.threads.setRange(1, 128)
+        self.save_dir = QLineEdit()
+        choose_dir = QPushButton("选择目录")
+        choose_dir.clicked.connect(self._choose_dir)
+        row = QHBoxLayout()
+        row.addWidget(self.save_dir)
+        row.addWidget(choose_dir)
+        form = QFormLayout()
+        form.addRow("名称", self.name)
+        form.addRow("标签，逗号分隔", self.tags)
+        form.addRow("备注", self.note)
+        form.addRow("", self.ad_filter)
+        form.addRow("过滤关键词", self.keywords)
+        form.addRow("线程数", self.threads)
+        form.addRow("保存目录", row)
+        add = QPushButton("新增配置")
+        add.clicked.connect(self._add_profile)
+        save = QPushButton("保存当前配置")
+        save.clicked.connect(self._save_current)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form_column.addLayout(form)
+        form_column.addWidget(add)
+        form_column.addWidget(save)
+        form_column.addWidget(buttons)
+        layout.addWidget(self.list_widget, 1)
+        layout.addLayout(form_column, 2)
+        self.list_widget.currentRowChanged.connect(self._load_profile)
+        self._refresh()
+
+    def accept(self) -> None:
+        self._save_current()
+        super().accept()
+
+    def _refresh(self) -> None:
+        self.list_widget.clear()
+        for profile in self.profiles:
+            QListWidgetItem(profile_label(profile), self.list_widget)
+        if self.profiles:
+            self.list_widget.setCurrentRow(0)
+
+    def _load_profile(self, index: int) -> None:
+        if index < 0 or index >= len(self.profiles):
+            return
+        profile = self.profiles[index]
+        self.name.setText(profile.get("name", ""))
+        self.tags.setText(", ".join(profile.get("tags", [])))
+        self.note.setPlainText(profile.get("note", ""))
+        self.ad_filter.setChecked(bool(profile.get("ad_filter", False)))
+        self.keywords.setPlainText("\n".join(profile.get("filter_keywords", [])))
+        self.threads.setValue(int(profile.get("threads", 16)))
+        self.save_dir.setText(profile.get("save_dir", "~/Downloads"))
+
+    def _save_current(self) -> None:
+        index = self.list_widget.currentRow()
+        if index < 0:
+            return
+        self.profiles[index] = self._form_profile()
+        self._refresh()
+        self.list_widget.setCurrentRow(index)
+
+    def _add_profile(self) -> None:
+        profile = DEFAULT_PROFILE.copy()
+        profile["name"] = f"配置 {len(self.profiles) + 1}"
+        self.profiles.append(profile)
+        self._refresh()
+        self.list_widget.setCurrentRow(len(self.profiles) - 1)
+
+    def _choose_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "选择保存目录", self.save_dir.text())
+        if path:
+            self.save_dir.setText(path)
+
+    def _form_profile(self) -> dict:
+        return {
+            "name": self.name.text().strip() or "未命名配置",
+            "tags": [tag.strip() for tag in self.tags.text().split(",") if tag.strip()],
+            "note": self.note.toPlainText().strip(),
+            "ad_filter": self.ad_filter.isChecked(),
+            "filter_keywords": [line.strip() for line in self.keywords.toPlainText().splitlines() if line.strip()],
+            "threads": self.threads.value(),
+            "save_dir": self.save_dir.text().strip() or "~/Downloads",
+        }
+
+
+def profile_label(profile: dict) -> str:
+    tags = ", ".join(profile.get("tags", []))
+    return f"{profile.get('name', '未命名配置')}" + (f" [{tags}]" if tags else "")
+
+
+def profile_summary(profile: dict) -> str:
+    keywords = ", ".join(profile.get("filter_keywords", [])) or "无"
+    note = profile.get("note", "无")
+    return (
+        f"备注：{note}\n"
+        f"过滤：{'开启' if profile.get('ad_filter') else '关闭'}；关键词：{keywords}\n"
+        f"线程：{profile.get('threads', 16)}；保存目录：{profile.get('save_dir', '~/Downloads')}"
+    )

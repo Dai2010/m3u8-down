@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag, for example v0.2.1
+        description: Release tag, for example v0.3.0
         required: true
-        default: v0.2.1
+        default: v0.3.0
   push:
     tags:
       - "v*"
@@ -34,12 +34,12 @@ jobs:
           CI_MAVEN_REPOS: official
         run: gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1
       - name: Build deb
-        run: bash packaging/linux/build_deb.sh 0.2.1
+        run: bash packaging/linux/build_deb.sh 0.3.0
       - name: Collect assets
         run: |
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk dist/m3u8-downloader-android-arm64-v8a-debug.apk
-          cp build/release/m3u8-downloader_0.2.1_amd64.deb dist/
+          cp build/release/m3u8-downloader_0.3.0_amd64.deb dist/
           sha256sum dist/* > dist/SHA256SUMS-linux-android.txt
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
@@ -65,24 +65,24 @@ jobs:
           image = Image.open("packaging/assets/m3u8-downloader.png")
           image.save("packaging/assets/m3u8-downloader.ico", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
       - name: Build exe
-        run: pyinstaller --name m3u8-downloader --onefile --windowed --icon packaging/assets/m3u8-downloader.ico m3u8_downloader/gui/app.py
+        run: pyinstaller --name m3u8-downloader --onefile --windowed --paths . --collect-submodules m3u8_downloader --collect-all PyQt6 --icon packaging/assets/m3u8-downloader.ico --add-data "packaging/assets/m3u8-downloader.ico;." m3u8_downloader/gui/launcher.py
       - name: Install WiX Toolset
         run: choco install wixtoolset --no-progress -y
       - name: Build msi
         shell: cmd
         run: |
           candle -dSourceExe=dist\m3u8-downloader.exe -dIconFile=packaging\assets\m3u8-downloader.ico packaging\windows\m3u8-downloader.wxs -out dist\m3u8-downloader.wixobj
-          light -ext WixUIExtension -out dist\m3u8-downloader-0.2.1-windows-x64.msi dist\m3u8-downloader.wixobj
+          light -ext WixUIExtension -out dist\m3u8-downloader-0.3.0-windows-x64.msi dist\m3u8-downloader.wixobj
       - name: Collect assets
         shell: bash
         run: |
-          mv dist/m3u8-downloader.exe dist/m3u8-downloader-0.2.1-windows-x64.exe
-          sha256sum dist/m3u8-downloader-0.2.1-windows-x64.exe dist/m3u8-downloader-0.2.1-windows-x64.msi > dist/SHA256SUMS-windows.txt
+          mv dist/m3u8-downloader.exe dist/m3u8-downloader-0.3.0-windows-x64.exe
+          sha256sum dist/m3u8-downloader-0.3.0-windows-x64.exe dist/m3u8-downloader-0.3.0-windows-x64.msi > dist/SHA256SUMS-windows.txt
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: |
-            dist/m3u8-downloader-0.2.1-windows-x64.exe
-            dist/m3u8-downloader-0.2.1-windows-x64.msi
+            dist/m3u8-downloader-0.3.0-windows-x64.exe
+            dist/m3u8-downloader-0.3.0-windows-x64.msi
             dist/SHA256SUMS-windows.txt
