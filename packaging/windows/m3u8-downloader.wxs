@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="0.3.1" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
+  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="0.3.2" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
     <MediaTemplate EmbedCab="yes" />
