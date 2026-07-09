@@ -1,0 +1,129 @@
+.TH M3U8-DOWNLOADER 1 "July 2026" "m3u8-downloader 0.3.1" "User Commands"
+.SH NAME
+m3u8-downloader \- download, filter, and merge m3u8 streams
+.SH SYNOPSIS
+.B m3u8-downloader
+.RI [ options ]
+.I url
+.SH DESCRIPTION
+.B m3u8-downloader
+downloads an m3u8 playlist, optionally filters advertising segments by keyword
+or regular expression, downloads media segments concurrently, and merges them
+into an MP4 file with FFmpeg.
+.PP
+The command supports media playlists directly and master playlists with multiple
+variants. By default, the highest bandwidth variant is selected unless a variant
+index is specified.
+.SH ARGUMENTS
+.TP
+.I url
+The m3u8 playlist URL to download. This can be a media playlist or a master
+playlist.
+.SH OPTIONS
+.TP
+.B \-h, \--help
+Show command help and exit.
+.TP
+.BI \-o " OUTPUT"
+.TQ
+.BI \--output " OUTPUT"
+Write the merged MP4 file to
+.IR OUTPUT .
+.TP
+.BI \--work-dir " WORK_DIR"
+Directory used for downloaded TS segments. The directory is created if needed.
+.TP
+.BI \--header " HEADER"
+Add an HTTP request header. Use the form
+.IR "Name: value" .
+This option can be repeated. A common use is passing a Referer header.
+.TP
+.BI \--keyword " KEYWORD"
+Filter out segments whose URL or title contains
+.IR KEYWORD .
+This option can be repeated.
+.TP
+.B \--regex
+Treat filter keywords as regular expressions instead of plain text.
+.TP
+.BI \--threads " THREADS"
+Number of concurrent segment download workers.
+.TP
+.BI \--variant " VARIANT"
+Select a master playlist variant by zero-based index. If omitted, the highest
+bandwidth variant is used.
+.TP
+.BI \--dump-filtered " DUMP_FILTERED"
+Write the filtered m3u8 playlist to
+.I DUMP_FILTERED
+before downloading. This is useful for checking which segments remain after
+filtering.
+.TP
+.B \--keep-segments
+Keep downloaded TS segment files after the MP4 merge finishes.
+.SH EXAMPLES
+.SS Basic download
+.EX
+m3u8-downloader "https://example.com/video/index.m3u8" -o video.mp4
+.EE
+.SS Use a Referer header
+.EX
+m3u8-downloader "https://example.com/video.m3u8" \
+  -o video.mp4 \
+  --header "Referer: https://example.com/"
+.EE
+.SS Increase download concurrency
+.EX
+m3u8-downloader "https://example.com/video.m3u8" -o video.mp4 --threads 16
+.EE
+.SS Filter ad segments by keywords
+.EX
+m3u8-downloader "https://example.com/video.m3u8" \
+  -o video.mp4 \
+  --keyword adjump \
+  --keyword /ad/
+.EE
+.SS Filter with regular expressions and inspect the playlist
+.EX
+m3u8-downloader "https://example.com/video.m3u8" \
+  -o video.mp4 \
+  --keyword "ad|banner|promo" \
+  --regex \
+  --dump-filtered filtered.m3u8
+.EE
+.SS Select a master playlist variant
+.EX
+m3u8-downloader "https://example.com/master.m3u8" -o video.mp4 --variant 0
+.EE
+.SS Keep downloaded segment files
+.EX
+m3u8-downloader "https://example.com/video.m3u8" \
+  -o video.mp4 \
+  --work-dir ./segments \
+  --keep-segments
+.EE
+.SH FILES
+.TP
+.I ~/.config/m3u8-downloader/config.json
+Desktop application configuration file.
+.TP
+.I /usr/share/m3u8-downloader/
+Installed application source and shared files in the Debian package.
+.SH REQUIREMENTS
+The Debian package depends on Python 3, requests, aiohttp, PyQt6, Textual, and
+FFmpeg. FFmpeg must be available for MP4 merging.
+.SH PROJECT
+.TP
+Project homepage:
+.UR https://github.com/Dai2010/m3u8-down
+.UE
+.TP
+Author GitHub homepage:
+.UR https://github.com/Dai2010
+.UE
+.SH LICENSE
+GNU General Public License version 3.0.
+.SH SEE ALSO
+.BR m3u8-downloader-gui (1),
+.BR m3u8-downloader-tui (1),
+.BR ffmpeg (1)
