@@ -1,3 +1,6 @@
+import sys
+
+import m3u8_downloader.main as main_module
 from m3u8_downloader.main import _load_media_playlist
 
 
@@ -32,3 +35,14 @@ seg.ts
     playlist = _load_media_playlist("https://cdn.test/master.m3u8", {}, -1)
 
     assert playlist.segments[0].url == "https://cdn.test/seg.ts"
+
+
+def test_main_without_url_launches_tui(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["m3u8-downloader"])
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    monkeypatch.setattr(main_module, "_launch_tui", lambda: calls.append("tui"))
+
+    main_module.main()
+
+    assert calls == ["tui"]

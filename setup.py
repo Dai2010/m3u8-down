@@ -3,10 +3,10 @@ from setuptools import find_packages, setup
 
 setup(
     name="m3u8-downloader",
-    version="0.3.2",
+    version="0.3.3",
     packages=find_packages(),
-    install_requires=["requests>=2.31.0", "aiohttp>=3.9.0"],
-    extras_require={"desktop": ["PyQt6>=6.6.0", "textual>=0.80.0"]},
+    install_requires=["requests>=2.31.0", "aiohttp>=3.9.0", "textual>=0.80.0"],
+    extras_require={"desktop": ["PyQt6>=6.6.0"]},
     entry_points={
         "console_scripts": [
             "m3u8-downloader=m3u8_downloader.main:main",

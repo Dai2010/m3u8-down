@@ -33,12 +33,21 @@ pip install -r requirements.txt
 python -m m3u8_downloader "https://example.com/video/index.m3u8" -o video.mp4
 ```
 
+直接打开终端 TUI：
+
+```bash
+python -m m3u8_downloader
+```
+
+无参数运行 `m3u8-downloader` 会进入 TUI；传入 URL 和参数时会直接执行命令行下载。
+
 常用参数：
 
 ```bash
 python -m m3u8_downloader "https://example.com/master.m3u8" -o video.mp4 --variant 0
 python -m m3u8_downloader "https://example.com/video.m3u8" -o video.mp4 --threads 16
-python -m m3u8_downloader "https://example.com/video.m3u8" -o video.mp4 --keyword adjump --dump-filtered filtered.m3u8
+python -m m3u8_downloader "https://example.com/video.m3u8" -o video.mp4 --keyword /video/adjump/ --dump-filtered filtered.m3u8
+python -m m3u8_downloader --tui
 ```
 
 桌面 GUI：
@@ -81,10 +90,19 @@ Android APK 面向不依赖 GMS 的侧载安装场景，当前优先发布 `arm6
 
 Windows 版本由 GitHub Actions Release workflow 在 `windows-latest` 上构建，产物包括：
 
-- `m3u8-downloader-0.3.2-windows-x64.exe`
-- `m3u8-downloader-0.3.2-windows-x64.msi`
+- `m3u8-downloader-0.3.3-windows-x64.exe`
+- `m3u8-downloader-0.3.3-windows-x64.msi`
 
-Windows GUI 使用 PyInstaller 打包。下载合并仍依赖 FFmpeg，使用下载功能时需要系统 PATH 中可找到 `ffmpeg`。
+Windows `.exe` 安装器和 `.msi` 都会安装 GUI、CLI 和 TUI 三个入口，并把安装目录加入 PATH，PowerShell 中可直接运行：
+
+```powershell
+m3u8-downloader
+m3u8-downloader --tui
+m3u8-downloader-gui
+m3u8-downloader-tui
+```
+
+Windows 程序使用 PyInstaller 打包。下载合并仍依赖 FFmpeg，使用下载功能时需要系统 PATH 中可找到 `ffmpeg`。
 
 ## 配置
 
@@ -114,10 +132,10 @@ ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8
 Linux deb 构建示例：
 
 ```bash
-packaging/linux/build_deb.sh 0.3.2
+packaging/linux/build_deb.sh 0.3.3
 ```
 
-发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v0.3.2`。
+发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v0.3.3`。
 
 ## 发布产物
 
@@ -126,6 +144,6 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 当前发布资产包括：
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
-- `m3u8-downloader_0.3.2_amd64.deb`
-- `m3u8-downloader-0.3.2-windows-x64.exe`
-- `m3u8-downloader-0.3.2-windows-x64.msi`
+- `m3u8-downloader_0.3.3_amd64.deb`
+- `m3u8-downloader-0.3.3-windows-x64.exe`
+- `m3u8-downloader-0.3.3-windows-x64.msi`

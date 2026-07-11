@@ -4,12 +4,14 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
+const val DEFAULT_FILTER_KEYWORDS_TEXT = "/video/adjump/"
+
 data class DownloadProfile(
     val name: String = "默认配置",
     val tags: List<String> = emptyList(),
     val note: String = "",
     val adFilterEnabled: Boolean = false,
-    val keywords: String = "adjump\nad\nbanner",
+    val keywords: String = DEFAULT_FILTER_KEYWORDS_TEXT,
     val threads: String = "8",
     val savePathLabel: String = "应用目录",
     val treeUri: String = "",
@@ -29,7 +31,7 @@ object ProfileStore {
                 tags = item.optJSONArray("tags")?.let { tags -> List(tags.length()) { tags.getString(it) } }.orEmpty(),
                 note = item.optString("note", ""),
                 adFilterEnabled = item.optBoolean("adFilterEnabled", false),
-                keywords = item.optString("keywords", "adjump\nad\nbanner"),
+                keywords = normalizeKeywords(item.optString("keywords", DEFAULT_FILTER_KEYWORDS_TEXT)),
                 threads = item.optString("threads", "8"),
                 savePathLabel = item.optString("savePathLabel", "应用目录"),
                 treeUri = item.optString("treeUri", ""),
@@ -52,5 +54,10 @@ object ProfileStore {
             })
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, array.toString()).apply()
+    }
+
+    private fun normalizeKeywords(value: String): String {
+        val lines = value.lines().map(String::trim).filter(String::isNotEmpty)
+        return if (lines == listOf("adjump", "ad", "banner")) DEFAULT_FILTER_KEYWORDS_TEXT else value
     }
 }

@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 
+DEFAULT_FILTER_KEYWORDS = ["/video/adjump/"]
+LEGACY_DEFAULT_FILTER_KEYWORDS = ["adjump", "ad", "banner"]
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "threads": 16,
     "save_dir": "~/Downloads",
@@ -14,7 +18,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "Referer": "",
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
     },
-    "filter_keywords": ["adjump", "ad", "banner"],
+    "filter_keywords": DEFAULT_FILTER_KEYWORDS,
     "output_format": "mp4",
     "enable_resume": True,
     "proxy_port": 8888,
@@ -28,7 +32,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "tags": [],
     "note": "",
     "ad_filter": False,
-    "filter_keywords": ["adjump", "ad", "banner"],
+    "filter_keywords": DEFAULT_FILTER_KEYWORDS,
     "threads": 16,
     "save_dir": "~/Downloads",
 }
@@ -45,7 +49,7 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
         return deepcopy(DEFAULT_CONFIG)
     with target.open("r", encoding="utf-8") as file_obj:
         loaded = json.load(file_obj)
-    return _deep_merge(deepcopy(DEFAULT_CONFIG), loaded)
+    return _normalize_config(_deep_merge(deepcopy(DEFAULT_CONFIG), loaded))
 
 
 def save_config(config: dict[str, Any], path: Path | None = None) -> None:
@@ -61,12 +65,12 @@ def load_profiles(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     profiles = source.get("profiles") or []
     if not profiles:
         return [profile_from_config(source)]
-    return [_deep_merge(deepcopy(DEFAULT_PROFILE), profile) for profile in profiles]
+    return [_normalize_profile(_deep_merge(deepcopy(DEFAULT_PROFILE), profile)) for profile in profiles]
 
 
 def profile_from_config(config: dict[str, Any]) -> dict[str, Any]:
     profile = deepcopy(DEFAULT_PROFILE)
-    profile["filter_keywords"] = list(config.get("filter_keywords", DEFAULT_PROFILE["filter_keywords"]))
+    profile["filter_keywords"] = _normalize_keywords(list(config.get("filter_keywords", DEFAULT_PROFILE["filter_keywords"])))
     profile["threads"] = int(config.get("threads", DEFAULT_PROFILE["threads"]))
     profile["save_dir"] = config.get("save_dir", DEFAULT_PROFILE["save_dir"])
     return profile
@@ -86,3 +90,18 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             base[key] = value
     return base
+
+
+def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
+    config["filter_keywords"] = _normalize_keywords(config.get("filter_keywords", []))
+    config["profiles"] = [_normalize_profile(profile) for profile in config.get("profiles", [])]
+    return config
+
+
+def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
+    profile["filter_keywords"] = _normalize_keywords(profile.get("filter_keywords", []))
+    return profile
+
+
+def _normalize_keywords(keywords: list[str]) -> list[str]:
+    return DEFAULT_FILTER_KEYWORDS.copy() if keywords == LEGACY_DEFAULT_FILTER_KEYWORDS else keywords

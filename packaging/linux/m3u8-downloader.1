@@ -1,12 +1,13 @@
-.TH M3U8-DOWNLOADER 1 "July 2026" "m3u8-downloader 0.3.2" "User Commands"
+.TH M3U8-DOWNLOADER 1 "July 2026" "m3u8-downloader 0.3.3" "User Commands"
 .SH NAME
 m3u8-downloader \- download, filter, and merge m3u8 streams
 .SH SYNOPSIS
 .B m3u8-downloader
 .RI [ options ]
-.I url
+.RI [ url ]
 .SH DESCRIPTION
 .B m3u8-downloader
+opens the terminal UI when run without a URL. When a URL is provided, it
 downloads an m3u8 playlist, optionally filters advertising segments by keyword
 or regular expression, downloads media segments concurrently, and merges them
 into an MP4 file with FFmpeg.
@@ -17,8 +18,8 @@ index is specified.
 .SH ARGUMENTS
 .TP
 .I url
-The m3u8 playlist URL to download. This can be a media playlist or a master
-playlist.
+Optional m3u8 playlist URL to download directly. This can be a media playlist or
+a master playlist. If omitted, the terminal UI is opened.
 .SH OPTIONS
 .TP
 .B \-h, \--help
@@ -61,7 +62,14 @@ filtering.
 .TP
 .B \--keep-segments
 Keep downloaded TS segment files after the MP4 merge finishes.
+.TP
+.B \--tui
+Open the terminal UI explicitly.
 .SH EXAMPLES
+.SS Open the terminal UI
+.EX
+m3u8-downloader
+.EE
 .SS Basic download
 .EX
 m3u8-downloader "https://example.com/video/index.m3u8" -o video.mp4
@@ -80,14 +88,13 @@ m3u8-downloader "https://example.com/video.m3u8" -o video.mp4 --threads 16
 .EX
 m3u8-downloader "https://example.com/video.m3u8" \
   -o video.mp4 \
-  --keyword adjump \
-  --keyword /ad/
+  --keyword /video/adjump/
 .EE
 .SS Filter with regular expressions and inspect the playlist
 .EX
 m3u8-downloader "https://example.com/video.m3u8" \
   -o video.mp4 \
-  --keyword "ad|banner|promo" \
+  --keyword "adjump|banner|promo" \
   --regex \
   --dump-filtered filtered.m3u8
 .EE

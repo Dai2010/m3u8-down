@@ -1,11 +1,17 @@
 package com.dai2010.m3u8down.ui
 
 import android.app.Activity
+import android.os.Build
 import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
+import android.view.WindowManager
 import androidx.annotation.OptIn
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -21,14 +27,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.dai2010.m3u8down.parser.M3U8Parser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
@@ -44,8 +53,10 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     val context = LocalContext.current
     DisposableEffect(Unit) {
         val activity = context as? Activity
-        val decor = activity?.window?.decorView
+        val window = activity?.window
+        val decor = window?.decorView
         val previousFlags = decor?.systemUiVisibility ?: 0
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         decor?.systemUiVisibility = previousFlags or
             View.SYSTEM_UI_FLAG_FULLSCREEN or
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
@@ -53,7 +64,17 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
             View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        onDispose { decor?.systemUiVisibility = previousFlags }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window?.insetsController?.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            window?.insetsController?.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+        }
+        onDispose {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window?.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+            }
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            decor?.systemUiVisibility = previousFlags
+        }
     }
     var playbackPosition by rememberSaveable(url) { mutableLongStateOf(0L) }
     var shouldPlay by rememberSaveable(url) { mutableStateOf(true) }
@@ -78,7 +99,8 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
         if (mediaUri.isBlank()) return@remember null
         val httpFactory = DefaultHttpDataSource.Factory()
         if (referer.isNotBlank()) httpFactory.setDefaultRequestProperties(mapOf("Referer" to referer))
-        val mediaSource = HlsMediaSource.Factory(httpFactory)
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
+        val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
             .createMediaSource(MediaItem.fromUri(mediaUri))
         ExoPlayer.Builder(context).build().apply {
             setMediaSource(mediaSource)
@@ -97,16 +119,21 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-            Text("返回流播")
-        }
+    Box(modifier = Modifier.fillMaxSize()) {
         if (player == null) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text(status)
+            Column(modifier = Modifier.align(Alignment.Center).padding(24.dp)) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(status)
+            }
         } else {
-            AndroidView(factory = { PlayerView(it).apply { this.player = player } }, modifier = Modifier.fillMaxSize())
+            AndroidView(
+                factory = { PlayerView(it).apply { this.player = player } },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Button(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).padding(12.dp)) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+            Text("返回")
         }
     }
 }
@@ -175,6 +202,7 @@ private fun isSegmentScopedTag(line: String): Boolean = line == "#EXT-X-DISCONTI
     line.startsWith("#EXT-X-PROGRAM-DATE-TIME") ||
     line.startsWith("#EXT-X-DATERANGE") ||
     line.startsWith("#EXT-X-GAP") ||
+    line.startsWith("#EXT-X-MAP") ||
     line.startsWith("#EXT-X-PART") ||
     line.startsWith("#EXT-X-PRELOAD-HINT")
 

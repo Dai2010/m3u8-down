@@ -59,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.dai2010.m3u8down.config.DEFAULT_FILTER_KEYWORDS_TEXT
 import com.dai2010.m3u8down.config.DownloadProfile
 import com.dai2010.m3u8down.config.ProfileStore
 import com.dai2010.m3u8down.download.DownloadManager
@@ -75,9 +76,9 @@ fun HomeScreen() {
     var url by rememberSaveable { mutableStateOf("") }
     var referer by rememberSaveable { mutableStateOf("") }
     var streamAdFilterEnabled by rememberSaveable { mutableStateOf(false) }
-    var streamKeywords by rememberSaveable { mutableStateOf("adjump\nad\nbanner") }
+    var streamKeywords by rememberSaveable { mutableStateOf(DEFAULT_FILTER_KEYWORDS_TEXT) }
     var downloadAdFilterEnabled by rememberSaveable { mutableStateOf(false) }
-    var downloadKeywords by rememberSaveable { mutableStateOf("adjump\nad\nbanner") }
+    var downloadKeywords by rememberSaveable { mutableStateOf(DEFAULT_FILTER_KEYWORDS_TEXT) }
     var threadText by rememberSaveable { mutableStateOf("8") }
     var downloadTreeUri by rememberSaveable { mutableStateOf("") }
     var savePathLabel by rememberSaveable { mutableStateOf(currentSavePath(context, "")) }
@@ -154,21 +155,27 @@ fun HomeScreen() {
                     try {
                         val manager = DownloadManager()
                         val headers = mapOf("Referer" to referer)
-                        val cache = File(context.cacheDir, "segments")
+                        val batchCache = File(context.cacheDir, "segments/batch-${System.currentTimeMillis()}")
                         val threads = threadText.toIntOrNull()?.coerceIn(1, 64) ?: 8
                         val filterWords = if (downloadAdFilterEnabled) downloadKeywords.lines().filter { it.isNotBlank() } else emptyList()
-                        tasks.forEachIndexed { index, item ->
-                            val fileName = item.outputName.ifBlank { "video-${(index + 1).toString().padStart(3, '0')}.mp4" }
-                            val finalOutput = if (downloadTreeUri.isBlank()) File(context.getExternalFilesDir(null), fileName) else File(context.cacheDir, "exports/$fileName")
-                            finalOutput.parentFile?.mkdirs()
-                            manager.download(item.url, finalOutput, cache, headers, filterWords, threads).collect { update ->
-                                status = "${index + 1}/${tasks.size} ${update.message}"
-                                progress = if (update.total == 0) 0f else update.done.toFloat() / update.total.toFloat()
+                        try {
+                            tasks.forEachIndexed { index, item ->
+                                val fileName = item.outputName.ifBlank { "video-${(index + 1).toString().padStart(3, '0')}.mp4" }
+                                val finalOutput = if (downloadTreeUri.isBlank()) File(context.getExternalFilesDir(null), fileName) else File(context.cacheDir, "exports/$fileName")
+                                val taskCache = File(batchCache, "url-${index + 1}")
+                                taskCache.deleteRecursively()
+                                finalOutput.parentFile?.mkdirs()
+                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads).collect { update ->
+                                    status = "${index + 1}/${tasks.size} ${update.message}"
+                                    progress = if (update.total == 0) 0f else update.done.toFloat() / update.total.toFloat()
+                                }
+                                if (downloadTreeUri.isNotBlank()) {
+                                    copyToTree(context, finalOutput, Uri.parse(downloadTreeUri), fileName)
+                                    finalOutput.delete()
+                                }
                             }
-                            if (downloadTreeUri.isNotBlank()) {
-                                copyToTree(context, finalOutput, Uri.parse(downloadTreeUri), fileName)
-                                finalOutput.delete()
-                            }
+                        } finally {
+                            batchCache.deleteRecursively()
                         }
                         status = "已完成 ${tasks.size} 个任务"
                     } catch (exc: Exception) {

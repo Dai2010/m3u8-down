@@ -18,7 +18,7 @@ from .core.utils import expand_path, parse_headers, require_ffmpeg, setup_loggin
 def main() -> None:
     setup_logging()
     parser = argparse.ArgumentParser(prog="m3u8-downloader")
-    parser.add_argument("url", help="m3u8 playlist URL")
+    parser.add_argument("url", nargs="?", help="m3u8 playlist URL; omit to open the TUI")
     parser.add_argument("-o", "--output", default="video.mp4", help="output MP4 path")
     parser.add_argument("--work-dir", default="", help="directory used for downloaded ts segments")
     parser.add_argument("--header", action="append", default=[], help="HTTP header, e.g. 'Referer: https://example.com'")
@@ -28,7 +28,12 @@ def main() -> None:
     parser.add_argument("--variant", type=int, default=-1, help="master playlist variant index; defaults to highest bandwidth")
     parser.add_argument("--dump-filtered", default="", help="write filtered m3u8 content to this path")
     parser.add_argument("--keep-segments", action="store_true", help="keep downloaded ts files after merge")
+    parser.add_argument("--tui", action="store_true", help="open the terminal UI")
     args = parser.parse_args()
+
+    if args.tui or not args.url:
+        _launch_tui()
+        return
 
     config = load_config()
     headers = {key: value for key, value in config["headers"].items() if value}
@@ -64,6 +69,16 @@ def main() -> None:
             shutil.rmtree(work_dir)
 
     print(f"saved {output}")
+
+
+def _launch_tui() -> None:
+    try:
+        from .tui.app import main as tui_main
+    except ImportError as exc:
+        raise SystemExit(
+            "TUI dependencies are not installed; install requirements-desktop.txt or pass a URL to run CLI download."
+        ) from exc
+    tui_main()
 
 
 def _load_media_playlist(url: str, headers: dict[str, str], variant_index: int = -1) -> Playlist:
