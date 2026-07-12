@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="4.0.1" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
-    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
-    <MajorUpgrade DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
+  <?ifndef AppVersion ?><?define AppVersion = "4.0.1" ?><?endif ?>
+  <?ifndef LicenseRtf ?><?define LicenseRtf = "dist\GPL-3.0.rtf" ?><?endif ?>
+  <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="$(var.AppVersion)" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Description="m3u8 Downloader Windows installer - GPL License v3.0" Comments="Distributed under the GNU General Public License version 3.0." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="AppIcon.ico" SourceFile="$(var.IconFile)" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPCOMMENTS" Value="m3u8 Downloader is distributed under the GNU General Public License version 3.0." />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
     <UIRef Id="WixUI_InstallDir" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -20,6 +24,9 @@
           <Component Id="PathEnvironment" Guid="dd67bf8f-18ee-4c78-92e5-f90e59f9c5ea">
             <Environment Id="AddInstallFolderToPath" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
             <RegistryValue Root="HKLM" Key="Software\Dai2010\m3u8 Downloader" Name="PathEnvironment" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+          <Component Id="AppIconFileComponent" Guid="84ddc9de-f8bc-4f69-91e3-82c4a34cb54b">
+            <File Id="InstalledAppIcon" Source="$(var.IconFile)" Name="m3u8-downloader.ico" KeyPath="yes" />
           </Component>
         </Directory>
       </Directory>
@@ -39,6 +46,7 @@
     <Feature Id="DefaultFeature" Title="m3u8 Downloader" Level="1">
       <ComponentRef Id="ApplicationFiles" />
       <ComponentRef Id="PathEnvironment" />
+      <ComponentRef Id="AppIconFileComponent" />
       <ComponentRef Id="StartMenuShortcutComponent" />
     </Feature>
   </Product>
