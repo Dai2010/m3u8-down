@@ -12,9 +12,11 @@
 - 调用 FFmpeg 将分片合并为 MP4。
 - 提供本地 m3u8 流播代理，可动态过滤广告片段后转发给 mpv、VLC 等播放器。
 - 桌面端支持 CLI、GUI、TUI 三种使用方式。
+- GUI、TUI 和 Android 端支持深色模式，默认跟随系统主题。
+- GUI、TUI 和 Android 端支持配置文件管理，可新建、修改和删除过滤、线程、保存目录、标签和备注。
 - Android 端以“流播”和“下载”作为入口，支持在线播放、下载、选择保存目录和设置下载并发线程数。
 - 去广告过滤是可选功能，关闭时不会显示过滤关键词输入。
-- Android 播放页面支持屏幕旋转时保留播放状态。
+- Android 播放页面支持屏幕旋转时保留播放状态，系统返回手势会回到上一界面。
 - Release workflow 可产出 Android APK、Linux deb、Windows exe 和 Windows msi。
 
 ## 桌面端使用
@@ -84,14 +86,14 @@ Android APK 面向不依赖 GMS 的侧载安装场景，当前优先发布 `arm6
 - Target SDK: 35
 - 架构：`arm64-v8a`
 
-应用打开后分为“流播”和“下载”两个入口。两个入口都可以按需开启去广告过滤；未开启时不显示过滤关键词。下载页可设置输出文件名、保存目录和并发线程数。未选择目录时，文件保存到应用外部文件目录。
+应用打开后分为“流播”和“下载”两个入口。两个入口都可以按需开启去广告过滤；未开启时不显示过滤关键词。下载页可设置输出文件名、保存目录和并发线程数。未选择目录时，文件保存到应用外部文件目录。首页可设置深色模式为跟随系统、浅色或深色；配置页支持新增、修改和删除下载配置。
 
 ## Windows 端
 
 Windows 版本由 GitHub Actions Release workflow 在 `windows-latest` 上构建，产物包括：
 
-- `m3u8-downloader-0.3.3-windows-x64.exe`
-- `m3u8-downloader-0.3.3-windows-x64.msi`
+- `m3u8-downloader-0.4.0-windows-x64.exe`
+- `m3u8-downloader-0.4.0-windows-x64.msi`
 
 Windows `.exe` 安装器和 `.msi` 都会安装 GUI、CLI 和 TUI 三个入口，并把安装目录加入 PATH，PowerShell 中可直接运行：
 
@@ -112,7 +114,7 @@ Windows 程序使用 PyInstaller 打包。下载合并仍依赖 FFmpeg，使用�
 ~/.config/m3u8-downloader/config.json
 ```
 
-默认配置包含下载线程数、保存目录、请求头、过滤关键词、输出格式、代理端口和主题设置。
+默认配置包含下载线程数、保存目录、请求头、过滤关键词、输出格式、代理端口、主题设置和配置文件列表。
 
 ## 测试
 
@@ -132,10 +134,10 @@ ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8
 Linux deb 构建示例：
 
 ```bash
-packaging/linux/build_deb.sh 0.3.3
+packaging/linux/build_deb.sh 0.4.0
 ```
 
-发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v0.3.3`。
+发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v0.4.0`。
 
 ## 发布产物
 
@@ -144,6 +146,6 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 当前发布资产包括：
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
-- `m3u8-downloader_0.3.3_amd64.deb`
-- `m3u8-downloader-0.3.3-windows-x64.exe`
-- `m3u8-downloader-0.3.3-windows-x64.msi`
+- `m3u8-downloader_0.4.0_amd64.deb`
+- `m3u8-downloader-0.4.0-windows-x64.exe`
+- `m3u8-downloader-0.4.0-windows-x64.msi`

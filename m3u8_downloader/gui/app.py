@@ -4,12 +4,12 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication, QStyleFactory
+from PyQt6.QtWidgets import QApplication
 
+from ..config.manager import load_config
 from .main_window import MainWindow
-from .resources import stylesheet
+from .theme import apply_gui_theme, configure_platform_style
 
 
 def main() -> None:
@@ -28,21 +28,8 @@ def _configure_desktop(app: QApplication) -> None:
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
-    styles = {style.lower(): style for style in QStyleFactory.keys()}
-    if "gnome" in desktop and "gtk3" in styles:
-        app.setStyle(styles["gtk3"])
-    else:
-        app.setStyle(styles.get("fusion", app.style().objectName()))
-
-    if "gnome" in desktop:
-        QIcon.setThemeName("Adwaita")
-    elif "kde" in desktop:
-        QIcon.setThemeName("breeze")
-
-    color_scheme = getattr(app.styleHints(), "colorScheme", None)
-    is_dark = bool(color_scheme and color_scheme() == Qt.ColorScheme.Dark)
-    app.setStyleSheet(stylesheet(is_dark))
+    configure_platform_style(app)
+    apply_gui_theme(app, load_config().get("theme", "system"))
 
 
 def _resource_path(name: str) -> Path:

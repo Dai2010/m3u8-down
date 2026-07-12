@@ -3,6 +3,7 @@ package com.dai2010.m3u8down.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -62,6 +63,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.dai2010.m3u8down.config.DEFAULT_FILTER_KEYWORDS_TEXT
 import com.dai2010.m3u8down.config.DownloadProfile
 import com.dai2010.m3u8down.config.ProfileStore
+import com.dai2010.m3u8down.config.ThemeMode
 import com.dai2010.m3u8down.download.DownloadManager
 import kotlinx.coroutines.launch
 import java.io.File
@@ -69,7 +71,7 @@ import java.io.File
 data class DownloadItem(val id: Int, val url: String = "", val outputName: String = "video.mp4")
 
 @Composable
-fun HomeScreen() {
+fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var screen by rememberSaveable { mutableStateOf("home") }
@@ -88,6 +90,17 @@ fun HomeScreen() {
     val downloadItems = remember { mutableStateListOf(DownloadItem(1, outputName = "video-001.mp4")) }
     var profiles by remember { mutableStateOf(ProfileStore.load(context)) }
     var selectedProfileIndex by rememberSaveable { mutableIntStateOf(0) }
+
+    fun goBack() {
+        screen = when (screen) {
+            "player" -> "stream"
+            "stream", "downloadMode", "profiles", "about" -> "home"
+            "download" -> "downloadMode"
+            else -> "home"
+        }
+    }
+
+    BackHandler(enabled = screen != "home") { goBack() }
 
     fun applyProfile(profile: DownloadProfile) {
         downloadAdFilterEnabled = profile.adFilterEnabled
@@ -109,7 +122,7 @@ fun HomeScreen() {
     }
 
     when (screen) {
-        "stream" -> StreamScreen(url, { url = it }, referer, { referer = it }, streamAdFilterEnabled, { streamAdFilterEnabled = it }, streamKeywords, { streamKeywords = it }, { screen = "player" }, { screen = "home" })
+        "stream" -> StreamScreen(url, { url = it }, referer, { referer = it }, streamAdFilterEnabled, { streamAdFilterEnabled = it }, streamKeywords, { streamKeywords = it }, { screen = "player" }, { goBack() })
         "downloadMode" -> DownloadModeScreen(
             profiles = profiles,
             selectedIndex = selectedProfileIndex,
@@ -119,7 +132,7 @@ fun HomeScreen() {
                 screen = "download"
             },
             onGuided = { screen = "download" },
-            onBack = { screen = "home" },
+            onBack = { goBack() },
         )
         "download" -> DownloadScreen(
             items = downloadItems,
@@ -144,7 +157,7 @@ fun HomeScreen() {
             status = status,
             progress = progress,
             onChooseSavePath = { directoryLauncher.launch(null) },
-            onBack = { screen = "home" },
+            onBack = { goBack() },
             onDownload = {
                 scope.launch {
                     val tasks = downloadItems.filter { it.url.isNotBlank() }
@@ -190,27 +203,37 @@ fun HomeScreen() {
             treeUri = downloadTreeUri,
             onChooseSavePath = { directoryLauncher.launch(null) },
             onProfilesChange = {
-                profiles = it
-                ProfileStore.save(context, it)
+                val next = it.ifEmpty { listOf(DownloadProfile()) }
+                profiles = next
+                selectedProfileIndex = selectedProfileIndex.coerceIn(0, next.lastIndex)
+                ProfileStore.save(context, next)
             },
-            onBack = { screen = "home" },
+            onBack = { goBack() },
         )
-        "about" -> AboutScreen(onBack = { screen = "home" })
-        "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, { screen = "stream" })
-        else -> DirectoryScreen(onStream = { screen = "stream" }, onDownload = { screen = "downloadMode" }, onProfiles = { screen = "profiles" }, onAbout = { screen = "about" })
+        "about" -> AboutScreen(onBack = { goBack() })
+        "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, { goBack() })
+        else -> DirectoryScreen(
+            themeMode = themeMode,
+            onThemeModeChange = onThemeModeChange,
+            onStream = { screen = "stream" },
+            onDownload = { screen = "downloadMode" },
+            onProfiles = { screen = "profiles" },
+            onAbout = { screen = "about" },
+        )
     }
 }
 
 @Composable
-private fun DirectoryScreen(onStream: () -> Unit, onDownload: () -> Unit, onProfiles: () -> Unit, onAbout: () -> Unit) {
+private fun DirectoryScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit, onStream: () -> Unit, onDownload: () -> Unit, onProfiles: () -> Unit, onAbout: () -> Unit) {
     Scaffold { padding ->
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(padding).padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("m3u8 Downloader", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("选择要做的事情", color = MaterialTheme.colorScheme.onSurfaceVariant)
             EntryCard("流播", "直接播放 m3u8，可按需开启去广告过滤。", Icons.Default.PlayArrow, onStream)
             EntryCard("下载", "下载前选择已有配置，或进入引导式下载。", Icons.Default.Download, onDownload)
-            EntryCard("创建配置", "保存过滤、线程、目录、标签和备注。", Icons.Default.Settings, onProfiles)
+            EntryCard("管理配置", "新建、修改或删除过滤、线程、目录、标签和备注。", Icons.Default.Settings, onProfiles)
             EntryCard("关于", "作者主页、项目主页和协议。", Icons.Default.Info, onAbout)
+            ThemeChooser(themeMode, onThemeModeChange)
         }
     }
 }
@@ -288,7 +311,7 @@ private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadIte
 private fun ProfileScreen(profiles: List<DownloadProfile>, savePath: String, treeUri: String, onChooseSavePath: () -> Unit, onProfilesChange: (List<DownloadProfile>) -> Unit, onBack: () -> Unit) {
     var selected by rememberSaveable { mutableIntStateOf(0) }
     var profile by remember(profiles, selected) { mutableStateOf(profiles.getOrElse(selected) { DownloadProfile() }) }
-    FormScreen("创建配置", onBack) {
+    FormScreen("管理配置", onBack) {
         profiles.forEachIndexed { index, item -> TextButton(onClick = { selected = index; profile = item }, modifier = Modifier.fillMaxWidth()) { Text(profileLabel(item)) } }
         Button(onClick = { val next = profiles + DownloadProfile(name = "配置 ${profiles.size + 1}"); onProfilesChange(next); selected = next.lastIndex; profile = next.last() }, modifier = Modifier.fillMaxWidth()) { Text("新增配置") }
         LabeledField("名称") { OutlinedTextField(profile.name, { profile = profile.copy(name = it) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
@@ -304,7 +327,44 @@ private fun ProfileScreen(profiles: List<DownloadProfile>, savePath: String, tre
             updated[index] = profile.copy(savePathLabel = savePath, treeUri = treeUri)
             onProfilesChange(updated)
         }, modifier = Modifier.fillMaxWidth()) { Text("保存当前配置") }
+        TextButton(
+            onClick = {
+                if (profiles.size > 1) {
+                    val updated = profiles.toMutableList()
+                    val index = selected.coerceIn(0, updated.lastIndex)
+                    updated.removeAt(index)
+                    val next = updated.ifEmpty { listOf(DownloadProfile()) }
+                    selected = index.coerceAtMost(next.lastIndex)
+                    profile = next[selected]
+                    onProfilesChange(next)
+                }
+            },
+            enabled = profiles.size > 1,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(6.dp)); Text("删除当前配置") }
     }
+}
+
+@Composable
+private fun ThemeChooser(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+    ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("深色模式", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("默认跟随系统，也可以手动指定。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ThemeMode.values().forEach { mode ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    RadioButton(selected = themeMode == mode, onClick = { onThemeModeChange(mode) })
+                    Text(themeLabel(mode))
+                }
+            }
+        }
+    }
+}
+
+private fun themeLabel(mode: ThemeMode): String = when (mode) {
+    ThemeMode.SYSTEM -> "跟随系统"
+    ThemeMode.LIGHT -> "浅色"
+    ThemeMode.DARK -> "深色"
 }
 
 @Composable

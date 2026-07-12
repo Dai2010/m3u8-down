@@ -6,6 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .theme import normalize_theme
+
 
 DEFAULT_FILTER_KEYWORDS = ["/video/adjump/"]
 LEGACY_DEFAULT_FILTER_KEYWORDS = ["adjump", "ad", "banner"]
@@ -54,6 +56,7 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
 def save_config(config: dict[str, Any], path: Path | None = None) -> None:
     target = path or config_path()
+    config = _normalize_config(_deep_merge(deepcopy(DEFAULT_CONFIG), config))
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w", encoding="utf-8") as file_obj:
         json.dump(config, file_obj, indent=2, ensure_ascii=False)
@@ -78,9 +81,37 @@ def profile_from_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def save_profiles(profiles: list[dict[str, Any]], config: dict[str, Any] | None = None) -> dict[str, Any]:
     updated = deepcopy(config or load_config())
-    updated["profiles"] = profiles
+    updated["profiles"] = normalize_profiles(profiles)
     save_config(updated)
     return updated
+
+
+def normalize_profiles(profiles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized = [_normalize_profile(_deep_merge(deepcopy(DEFAULT_PROFILE), profile)) for profile in profiles]
+    return normalized or [deepcopy(DEFAULT_PROFILE)]
+
+
+def new_profile(name: str, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    profile = _normalize_profile(_deep_merge(deepcopy(DEFAULT_PROFILE), deepcopy(base or {})))
+    profile["name"] = name.strip() or DEFAULT_PROFILE["name"]
+    return profile
+
+
+def upsert_profile(profiles: list[dict[str, Any]], index: int, profile: dict[str, Any]) -> list[dict[str, Any]]:
+    updated = normalize_profiles(profiles)
+    normalized = _normalize_profile(_deep_merge(deepcopy(DEFAULT_PROFILE), profile))
+    if 0 <= index < len(updated):
+        updated[index] = normalized
+    else:
+        updated.append(normalized)
+    return normalize_profiles(updated)
+
+
+def delete_profile(profiles: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
+    updated = normalize_profiles(profiles)
+    if 0 <= index < len(updated):
+        del updated[index]
+    return normalize_profiles(updated)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -93,6 +124,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
+    config["theme"] = normalize_theme(config.get("theme", "system"))
     config["filter_keywords"] = _normalize_keywords(config.get("filter_keywords", []))
     config["profiles"] = [_normalize_profile(profile) for profile in config.get("profiles", [])]
     return config
@@ -100,8 +132,22 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     profile["filter_keywords"] = _normalize_keywords(profile.get("filter_keywords", []))
+    profile["tags"] = [str(tag).strip() for tag in profile.get("tags", []) if str(tag).strip()]
+    profile["threads"] = _coerce_threads(profile.get("threads", DEFAULT_PROFILE["threads"]))
+    profile["name"] = str(profile.get("name") or DEFAULT_PROFILE["name"]).strip()
+    profile["note"] = str(profile.get("note", "")).strip()
+    profile["save_dir"] = str(profile.get("save_dir") or DEFAULT_PROFILE["save_dir"]).strip()
+    profile["ad_filter"] = bool(profile.get("ad_filter", False))
     return profile
 
 
 def _normalize_keywords(keywords: list[str]) -> list[str]:
     return DEFAULT_FILTER_KEYWORDS.copy() if keywords == LEGACY_DEFAULT_FILTER_KEYWORDS else keywords
+
+
+def _coerce_threads(value: object) -> int:
+    try:
+        threads = int(value)
+    except (TypeError, ValueError):
+        return int(DEFAULT_PROFILE["threads"])
+    return max(1, min(128, threads))

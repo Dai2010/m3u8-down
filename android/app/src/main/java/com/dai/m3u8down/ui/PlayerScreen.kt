@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
 import com.dai2010.m3u8down.parser.M3U8Parser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -57,6 +58,7 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
         val decor = window?.decorView
         val previousFlags = decor?.systemUiVisibility ?: 0
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (window != null) WindowCompat.setDecorFitsSystemWindows(window, false)
         decor?.systemUiVisibility = previousFlags or
             View.SYSTEM_UI_FLAG_FULLSCREEN or
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
@@ -73,6 +75,7 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
                 window?.insetsController?.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
             }
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (window != null) WindowCompat.setDecorFitsSystemWindows(window, true)
             decor?.systemUiVisibility = previousFlags
         }
     }

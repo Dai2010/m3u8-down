@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -30,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..config.manager import DEFAULT_PROFILE, load_config, load_profiles, save_profiles
+from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
 from ..core.downloader import Downloader
 from ..core.filter import filter_playlist
 from ..core.merger import merge_to_mp4
@@ -38,6 +39,7 @@ from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
 from .settings_dialog import SettingsDialog
+from .theme import apply_gui_theme
 from .windows_dependencies import ensure_ffmpeg as ensure_windows_ffmpeg
 
 
@@ -253,6 +255,9 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.config, self)
         if dialog.exec():
             self.config = load_config()
+            app = QApplication.instance()
+            if app is not None:
+                apply_gui_theme(app, self.config.get("theme", "system"))
             referer = self.config.get("headers", {}).get("Referer", "")
             self.stream_referer.setText(referer)
             self.download_referer.setText(referer)
@@ -353,7 +358,7 @@ class MainWindow(QMainWindow):
         download = QPushButton("下载\n保存为 MP4，可按需开启去广告过滤。")
         download.setObjectName("entry")
         download.clicked.connect(lambda: self.stack.setCurrentWidget(self.download_page))
-        profiles = QPushButton("创建配置\n保存过滤、线程、目录和标签，下载前可选择。")
+        profiles = QPushButton("管理配置\n新建、修改或删除过滤、线程、目录和标签。")
         profiles.setObjectName("entry")
         profiles.clicked.connect(self._open_profiles)
         about = QPushButton("关于\n查看作者主页、项目主页和协议。")
@@ -559,7 +564,7 @@ class DownloadModeDialog(QDialog):
 class ProfileDialog(QDialog):
     def __init__(self, profiles: list[dict], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("配置")
+        self.setWindowTitle("管理配置")
         self.profiles = [profile.copy() for profile in profiles]
         layout = QHBoxLayout(self)
         self.list_widget = QListWidget()
@@ -591,12 +596,16 @@ class ProfileDialog(QDialog):
         add.clicked.connect(self._add_profile)
         save = QPushButton("保存当前配置")
         save.clicked.connect(self._save_current)
+        delete = QPushButton("删除当前配置")
+        delete.setObjectName("secondary")
+        delete.clicked.connect(self._delete_current)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form_column.addLayout(form)
         form_column.addWidget(add)
         form_column.addWidget(save)
+        form_column.addWidget(delete)
         form_column.addWidget(buttons)
         layout.addWidget(self.list_widget, 1)
         layout.addLayout(form_column, 2)
@@ -630,16 +639,30 @@ class ProfileDialog(QDialog):
         index = self.list_widget.currentRow()
         if index < 0:
             return
-        self.profiles[index] = self._form_profile()
+        self.profiles = upsert_profile(self.profiles, index, self._form_profile())
         self._refresh()
         self.list_widget.setCurrentRow(index)
 
     def _add_profile(self) -> None:
-        profile = DEFAULT_PROFILE.copy()
-        profile["name"] = f"配置 {len(self.profiles) + 1}"
+        profile = new_profile(f"配置 {len(self.profiles) + 1}")
         self.profiles.append(profile)
         self._refresh()
         self.list_widget.setCurrentRow(len(self.profiles) - 1)
+
+    def _delete_current(self) -> None:
+        index = self.list_widget.currentRow()
+        if index < 0:
+            return
+        if len(self.profiles) <= 1:
+            QMessageBox.information(self, "无法删除", "至少保留一个配置。")
+            return
+        name = self.profiles[index].get("name", "未命名配置")
+        answer = QMessageBox.question(self, "删除配置", f"确定删除“{name}”？")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.profiles = delete_profile(self.profiles, index)
+        self._refresh()
+        self.list_widget.setCurrentRow(min(index, len(self.profiles) - 1))
 
     def _choose_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "选择保存目录", self.save_dir.text())

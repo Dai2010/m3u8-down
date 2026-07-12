@@ -6,6 +6,16 @@ import org.json.JSONObject
 
 const val DEFAULT_FILTER_KEYWORDS_TEXT = "/video/adjump/"
 
+enum class ThemeMode(val value: String) {
+    SYSTEM("system"),
+    LIGHT("light"),
+    DARK("dark");
+
+    companion object {
+        fun from(value: String?): ThemeMode = values().firstOrNull { it.value == value } ?: SYSTEM
+    }
+}
+
 data class DownloadProfile(
     val name: String = "默认配置",
     val tags: List<String> = emptyList(),
@@ -59,5 +69,19 @@ object ProfileStore {
     private fun normalizeKeywords(value: String): String {
         val lines = value.lines().map(String::trim).filter(String::isNotEmpty)
         return if (lines == listOf("adjump", "ad", "banner")) DEFAULT_FILTER_KEYWORDS_TEXT else value
+    }
+}
+
+object ThemeStore {
+    private const val PREFS = "appearance"
+    private const val KEY_THEME = "theme"
+
+    fun load(context: Context): ThemeMode {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_THEME, ThemeMode.SYSTEM.value)
+        return ThemeMode.from(raw)
+    }
+
+    fun save(context: Context, mode: ThemeMode) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_THEME, mode.value).apply()
     }
 }

@@ -14,13 +14,14 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ..config.theme import THEME_OPTIONS
 from ..config.manager import save_config
 
 
 class SettingsDialog(QDialog):
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle("设置")
         self._config = config.copy()
 
         self.threads = QSpinBox()
@@ -28,7 +29,7 @@ class SettingsDialog(QDialog):
         self.threads.setValue(int(config.get("threads", 16)))
 
         self.save_dir = QLineEdit(str(config.get("save_dir", "~/Downloads")))
-        browse = QPushButton("Browse")
+        browse = QPushButton("选择")
         browse.setObjectName("secondary")
         browse.clicked.connect(self._choose_save_dir)
         save_dir_row = QHBoxLayout()
@@ -43,17 +44,17 @@ class SettingsDialog(QDialog):
         self.keywords.setFixedHeight(96)
 
         self.theme = QComboBox()
-        self.theme.addItems(["system", "light", "dark"])
+        self.theme.addItems(THEME_OPTIONS)
         index = self.theme.findText(str(config.get("theme", "system")))
         self.theme.setCurrentIndex(max(0, index))
 
         form = QFormLayout()
-        form.addRow("Threads", self.threads)
-        form.addRow("Save directory", save_dir_row)
+        form.addRow("线程数", self.threads)
+        form.addRow("保存目录", save_dir_row)
         form.addRow("Referer", self.referer)
         form.addRow("User-Agent", self.user_agent)
-        form.addRow("Filter keywords", self.keywords)
-        form.addRow("Theme", self.theme)
+        form.addRow("过滤关键词", self.keywords)
+        form.addRow("主题", self.theme)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -80,6 +81,6 @@ class SettingsDialog(QDialog):
         super().accept()
 
     def _choose_save_dir(self) -> None:
-        directory = QFileDialog.getExistingDirectory(self, "Choose save directory", self.save_dir.text())
+        directory = QFileDialog.getExistingDirectory(self, "选择保存目录", self.save_dir.text())
         if directory:
             self.save_dir.setText(directory)
