@@ -17,8 +17,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -31,7 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
+from ..config.manager import load_config, load_profiles
 from ..core.downloader import Downloader
 from ..core.filter import filter_playlist
 from ..core.merger import merge_to_mp4
@@ -252,9 +250,11 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Download failed", message)
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self.config, self)
+        dialog = SettingsDialog(self.config, self.profiles, self)
         if dialog.exec():
             self.config = load_config()
+            self.profiles = load_profiles(self.config)
+            self.active_profile = self.profiles[0]
             app = QApplication.instance()
             if app is not None:
                 apply_gui_theme(app, self.config.get("theme", "system"))
@@ -262,15 +262,8 @@ class MainWindow(QMainWindow):
             self.stream_referer.setText(referer)
             self.download_referer.setText(referer)
             self.download_threads.setValue(int(self.config.get("threads", 16)))
-            self._append_log("Settings saved")
-
-    def _open_profiles(self) -> None:
-        dialog = ProfileDialog(self.profiles, self)
-        if dialog.exec():
-            self.profiles = dialog.profiles
-            self.config = save_profiles(self.profiles, self.config)
-            self.active_profile = self.profiles[0]
             self._apply_profile(self.active_profile)
+            self._append_log("Settings saved")
 
     def _choose_download_mode(self) -> bool:
         dialog = DownloadModeDialog(self.profiles, self)
@@ -352,22 +345,18 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(subtitle)
 
-        stream = QPushButton("流播\n直接播放 m3u8，可按需开启去广告过滤。")
+        stream = QPushButton("流播\n在线播放")
         stream.setObjectName("entry")
         stream.clicked.connect(lambda: self.stack.setCurrentWidget(self.stream_page))
-        download = QPushButton("下载\n保存为 MP4，可按需开启去广告过滤。")
+        download = QPushButton("下载\n保存视频")
         download.setObjectName("entry")
         download.clicked.connect(lambda: self.stack.setCurrentWidget(self.download_page))
-        profiles = QPushButton("管理配置\n新建、修改或删除过滤、线程、目录和标签。")
-        profiles.setObjectName("entry")
-        profiles.clicked.connect(self._open_profiles)
-        about = QPushButton("关于\n查看作者主页、项目主页和协议。")
-        about.setObjectName("entry")
-        about.clicked.connect(self._show_about)
+        settings = QPushButton("设置\n配置、主题、关于")
+        settings.setObjectName("entry")
+        settings.clicked.connect(self._open_settings)
         layout.addWidget(stream)
         layout.addWidget(download)
-        layout.addWidget(profiles)
-        layout.addWidget(about)
+        layout.addWidget(settings)
         layout.addStretch(1)
         return page
 
@@ -513,17 +502,6 @@ class MainWindow(QMainWindow):
             config["threads"] = threads
         return config
 
-    def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "关于 m3u8 Downloader",
-            "m3u8 Downloader\n\n"
-            "作者主页：https://github.com/Dai2010\n"
-            "项目主页：https://github.com/Dai2010/m3u8-down\n"
-            "协议：GNU General Public License v3.0",
-        )
-
-
 class DownloadModeDialog(QDialog):
     def __init__(self, profiles: list[dict], parent=None):
         super().__init__(parent)
@@ -559,126 +537,6 @@ class DownloadModeDialog(QDialog):
             self.summary.setText("没有已有配置，将使用当前页面内容引导下载。")
             return
         self.summary.setText(profile_summary(self.profiles[index]))
-
-
-class ProfileDialog(QDialog):
-    def __init__(self, profiles: list[dict], parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("管理配置")
-        self.profiles = [profile.copy() for profile in profiles]
-        layout = QHBoxLayout(self)
-        self.list_widget = QListWidget()
-        form_column = QVBoxLayout()
-        self.name = QLineEdit()
-        self.tags = QLineEdit()
-        self.note = QTextEdit()
-        self.note.setFixedHeight(72)
-        self.ad_filter = QCheckBox("启用去广告过滤")
-        self.keywords = QTextEdit()
-        self.keywords.setFixedHeight(96)
-        self.threads = QSpinBox()
-        self.threads.setRange(1, 128)
-        self.save_dir = QLineEdit()
-        choose_dir = QPushButton("选择目录")
-        choose_dir.clicked.connect(self._choose_dir)
-        row = QHBoxLayout()
-        row.addWidget(self.save_dir)
-        row.addWidget(choose_dir)
-        form = QFormLayout()
-        form.addRow("名称", self.name)
-        form.addRow("标签，逗号分隔", self.tags)
-        form.addRow("备注", self.note)
-        form.addRow("", self.ad_filter)
-        form.addRow("过滤关键词", self.keywords)
-        form.addRow("线程数", self.threads)
-        form.addRow("保存目录", row)
-        add = QPushButton("新增配置")
-        add.clicked.connect(self._add_profile)
-        save = QPushButton("保存当前配置")
-        save.clicked.connect(self._save_current)
-        delete = QPushButton("删除当前配置")
-        delete.setObjectName("secondary")
-        delete.clicked.connect(self._delete_current)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        form_column.addLayout(form)
-        form_column.addWidget(add)
-        form_column.addWidget(save)
-        form_column.addWidget(delete)
-        form_column.addWidget(buttons)
-        layout.addWidget(self.list_widget, 1)
-        layout.addLayout(form_column, 2)
-        self.list_widget.currentRowChanged.connect(self._load_profile)
-        self._refresh()
-
-    def accept(self) -> None:
-        self._save_current()
-        super().accept()
-
-    def _refresh(self) -> None:
-        self.list_widget.clear()
-        for profile in self.profiles:
-            QListWidgetItem(profile_label(profile), self.list_widget)
-        if self.profiles:
-            self.list_widget.setCurrentRow(0)
-
-    def _load_profile(self, index: int) -> None:
-        if index < 0 or index >= len(self.profiles):
-            return
-        profile = self.profiles[index]
-        self.name.setText(profile.get("name", ""))
-        self.tags.setText(", ".join(profile.get("tags", [])))
-        self.note.setPlainText(profile.get("note", ""))
-        self.ad_filter.setChecked(bool(profile.get("ad_filter", False)))
-        self.keywords.setPlainText("\n".join(profile.get("filter_keywords", [])))
-        self.threads.setValue(int(profile.get("threads", 16)))
-        self.save_dir.setText(profile.get("save_dir", "~/Downloads"))
-
-    def _save_current(self) -> None:
-        index = self.list_widget.currentRow()
-        if index < 0:
-            return
-        self.profiles = upsert_profile(self.profiles, index, self._form_profile())
-        self._refresh()
-        self.list_widget.setCurrentRow(index)
-
-    def _add_profile(self) -> None:
-        profile = new_profile(f"配置 {len(self.profiles) + 1}")
-        self.profiles.append(profile)
-        self._refresh()
-        self.list_widget.setCurrentRow(len(self.profiles) - 1)
-
-    def _delete_current(self) -> None:
-        index = self.list_widget.currentRow()
-        if index < 0:
-            return
-        if len(self.profiles) <= 1:
-            QMessageBox.information(self, "无法删除", "至少保留一个配置。")
-            return
-        name = self.profiles[index].get("name", "未命名配置")
-        answer = QMessageBox.question(self, "删除配置", f"确定删除“{name}”？")
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self.profiles = delete_profile(self.profiles, index)
-        self._refresh()
-        self.list_widget.setCurrentRow(min(index, len(self.profiles) - 1))
-
-    def _choose_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "选择保存目录", self.save_dir.text())
-        if path:
-            self.save_dir.setText(path)
-
-    def _form_profile(self) -> dict:
-        return {
-            "name": self.name.text().strip() or "未命名配置",
-            "tags": [tag.strip() for tag in self.tags.text().split(",") if tag.strip()],
-            "note": self.note.toPlainText().strip(),
-            "ad_filter": self.ad_filter.isChecked(),
-            "filter_keywords": [line.strip() for line in self.keywords.toPlainText().splitlines() if line.strip()],
-            "threads": self.threads.value(),
-            "save_dir": self.save_dir.text().strip() or "~/Downloads",
-        }
 
 
 def profile_label(profile: dict) -> str:

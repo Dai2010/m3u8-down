@@ -14,8 +14,8 @@ android {
         applicationId = "com.dai2010.m3u8down"
         minSdk = 29
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.4.0"
+        versionCode = 10
+        versionName = "4.0.1"
 
     }
 
@@ -33,6 +33,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 

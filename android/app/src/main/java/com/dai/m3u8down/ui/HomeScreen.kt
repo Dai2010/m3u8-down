@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -60,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.dai2010.m3u8down.BuildConfig
 import com.dai2010.m3u8down.config.DEFAULT_FILTER_KEYWORDS_TEXT
 import com.dai2010.m3u8down.config.DownloadProfile
 import com.dai2010.m3u8down.config.ProfileStore
@@ -94,7 +96,8 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     fun goBack() {
         screen = when (screen) {
             "player" -> "stream"
-            "stream", "downloadMode", "profiles", "about" -> "home"
+            "stream", "downloadMode", "settings" -> "home"
+            "profiles", "about" -> "settings"
             "download" -> "downloadMode"
             else -> "home"
         }
@@ -208,33 +211,48 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
                 selectedProfileIndex = selectedProfileIndex.coerceIn(0, next.lastIndex)
                 ProfileStore.save(context, next)
             },
+            onEditProfile = { profile ->
+                downloadTreeUri = profile.treeUri
+                savePathLabel = profile.savePathLabel.ifBlank { currentSavePath(context, profile.treeUri) }
+            },
+            onBack = { goBack() },
+        )
+        "settings" -> SettingsMenuScreen(
+            themeMode = themeMode,
+            onThemeModeChange = onThemeModeChange,
+            onProfiles = { screen = "profiles" },
+            onAbout = { screen = "about" },
             onBack = { goBack() },
         )
         "about" -> AboutScreen(onBack = { goBack() })
         "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, { goBack() })
         else -> DirectoryScreen(
-            themeMode = themeMode,
-            onThemeModeChange = onThemeModeChange,
             onStream = { screen = "stream" },
             onDownload = { screen = "downloadMode" },
-            onProfiles = { screen = "profiles" },
-            onAbout = { screen = "about" },
+            onSettings = { screen = "settings" },
         )
     }
 }
 
 @Composable
-private fun DirectoryScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit, onStream: () -> Unit, onDownload: () -> Unit, onProfiles: () -> Unit, onAbout: () -> Unit) {
+private fun DirectoryScreen(onStream: () -> Unit, onDownload: () -> Unit, onSettings: () -> Unit) {
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(padding).padding(20.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("m3u8 Downloader", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text("选择要做的事情", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            EntryCard("流播", "直接播放 m3u8，可按需开启去广告过滤。", Icons.Default.PlayArrow, onStream)
-            EntryCard("下载", "下载前选择已有配置，或进入引导式下载。", Icons.Default.Download, onDownload)
-            EntryCard("管理配置", "新建、修改或删除过滤、线程、目录、标签和备注。", Icons.Default.Settings, onProfiles)
-            EntryCard("关于", "作者主页、项目主页和协议。", Icons.Default.Info, onAbout)
-            ThemeChooser(themeMode, onThemeModeChange)
+            EntryCard("流播", "在线播放", Icons.Default.PlayArrow, onStream)
+            EntryCard("下载", "保存视频", Icons.Default.Download, onDownload)
+            EntryCard("设置", "配置、主题、关于", Icons.Default.Settings, onSettings)
         }
+    }
+}
+
+@Composable
+private fun SettingsMenuScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit, onProfiles: () -> Unit, onAbout: () -> Unit, onBack: () -> Unit) {
+    FormScreen("设置", onBack) {
+        ThemeChooser(themeMode, onThemeModeChange)
+        EntryCard("管理配置", "点击配置即可编辑", Icons.Default.Settings, onProfiles)
+        EntryCard("关于", "版本与链接", Icons.Default.Info, onAbout)
     }
 }
 
@@ -308,12 +326,59 @@ private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadIte
 }
 
 @Composable
-private fun ProfileScreen(profiles: List<DownloadProfile>, savePath: String, treeUri: String, onChooseSavePath: () -> Unit, onProfilesChange: (List<DownloadProfile>) -> Unit, onBack: () -> Unit) {
-    var selected by rememberSaveable { mutableIntStateOf(0) }
-    var profile by remember(profiles, selected) { mutableStateOf(profiles.getOrElse(selected) { DownloadProfile() }) }
-    FormScreen("管理配置", onBack) {
-        profiles.forEachIndexed { index, item -> TextButton(onClick = { selected = index; profile = item }, modifier = Modifier.fillMaxWidth()) { Text(profileLabel(item)) } }
-        Button(onClick = { val next = profiles + DownloadProfile(name = "配置 ${profiles.size + 1}"); onProfilesChange(next); selected = next.lastIndex; profile = next.last() }, modifier = Modifier.fillMaxWidth()) { Text("新增配置") }
+private fun ProfileScreen(
+    profiles: List<DownloadProfile>,
+    savePath: String,
+    treeUri: String,
+    onChooseSavePath: () -> Unit,
+    onProfilesChange: (List<DownloadProfile>) -> Unit,
+    onEditProfile: (DownloadProfile) -> Unit,
+    onBack: () -> Unit,
+) {
+    var editingIndex by rememberSaveable { mutableStateOf<Int?>(null) }
+    val safeProfiles = profiles.ifEmpty { listOf(DownloadProfile()) }
+
+    if (editingIndex == null) {
+        Scaffold(
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = {
+                        val next = safeProfiles + DownloadProfile(name = "配置 ${safeProfiles.size + 1}")
+                        onProfilesChange(next)
+                        onEditProfile(next.last())
+                        editingIndex = next.lastIndex
+                    },
+                ) { Icon(Icons.Default.Add, "新建配置") }
+            },
+        ) { padding ->
+            Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(padding).verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }; Text("管理配置", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) }
+                Text("点击配置即可编辑。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                safeProfiles.forEachIndexed { index, item ->
+                    ElevatedCard(
+                        onClick = {
+                            onEditProfile(item)
+                            editingIndex = index
+                        },
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(profileLabel(item), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Text(profileSummary(item), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(72.dp))
+            }
+        }
+        return
+    }
+
+    val index = editingIndex!!.coerceIn(0, safeProfiles.lastIndex)
+    var profile by remember(index, safeProfiles) { mutableStateOf(safeProfiles[index]) }
+    BackHandler { editingIndex = null }
+    FormScreen("编辑配置", { editingIndex = null }) {
         LabeledField("名称") { OutlinedTextField(profile.name, { profile = profile.copy(name = it) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         LabeledField("标签，逗号分隔") { OutlinedTextField(profile.tags.joinToString(", "), { profile = profile.copy(tags = it.split(",").map(String::trim).filter(String::isNotBlank)) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         LabeledField("备注") { OutlinedTextField(profile.note, { profile = profile.copy(note = it) }, minLines = 2, modifier = Modifier.fillMaxWidth()) }
@@ -322,26 +387,23 @@ private fun ProfileScreen(profiles: List<DownloadProfile>, savePath: String, tre
         LabeledField("线程数") { OutlinedTextField(profile.threads, { profile = profile.copy(threads = it.filter(Char::isDigit).take(2)) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         LabeledField("保存目录") { Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(savePath, {}, readOnly = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(8.dp)); Button(onClick = onChooseSavePath) { Icon(Icons.Default.Folder, null) } } }
         Button(onClick = {
-            val updated = profiles.toMutableList()
-            val index = selected.coerceIn(0, updated.lastIndex)
+            val updated = safeProfiles.toMutableList()
             updated[index] = profile.copy(savePathLabel = savePath, treeUri = treeUri)
             onProfilesChange(updated)
-        }, modifier = Modifier.fillMaxWidth()) { Text("保存当前配置") }
+            editingIndex = null
+        }, modifier = Modifier.fillMaxWidth()) { Text("保存配置") }
         TextButton(
             onClick = {
-                if (profiles.size > 1) {
-                    val updated = profiles.toMutableList()
-                    val index = selected.coerceIn(0, updated.lastIndex)
+                if (safeProfiles.size > 1) {
+                    val updated = safeProfiles.toMutableList()
                     updated.removeAt(index)
-                    val next = updated.ifEmpty { listOf(DownloadProfile()) }
-                    selected = index.coerceAtMost(next.lastIndex)
-                    profile = next[selected]
-                    onProfilesChange(next)
+                    onProfilesChange(updated.ifEmpty { listOf(DownloadProfile()) })
+                    editingIndex = null
                 }
             },
-            enabled = profiles.size > 1,
+            enabled = safeProfiles.size > 1,
             modifier = Modifier.fillMaxWidth(),
-        ) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(6.dp)); Text("删除当前配置") }
+        ) { Icon(Icons.Default.Delete, null); Spacer(Modifier.width(6.dp)); Text("删除配置") }
     }
 }
 
@@ -369,12 +431,22 @@ private fun themeLabel(mode: ThemeMode): String = when (mode) {
 
 @Composable
 private fun AboutScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
     FormScreen("关于", onBack) {
         Text("m3u8 Downloader", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("作者主页：https://github.com/Dai2010")
-        Text("项目主页：https://github.com/Dai2010/m3u8-down")
+        Text("版本：${BuildConfig.VERSION_NAME}")
+        LinkButton("个人主页", "https://github.com/Dai2010", context)
+        LinkButton("项目主页", "https://github.com/Dai2010/m3u8-down", context)
         Text("协议：GNU General Public License v3.0")
     }
+}
+
+@Composable
+private fun LinkButton(label: String, url: String, context: Context) {
+    TextButton(
+        onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("$label：$url") }
 }
 
 @Composable
