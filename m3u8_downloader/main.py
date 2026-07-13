@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import requests
 
 from .config.manager import load_config
+from .core.direct_downloader import download_direct_media
 from .core.downloader import Downloader
 from .core.ffmpeg_downloader import download_with_ffmpeg
 from .core.filter import filter_playlist
@@ -48,6 +49,15 @@ def main() -> None:
 
     media_info = detect_media_type(args.url, headers)
     print(f"detected {media_info.display_name}")
+    if media_info.kind == MediaKind.PROGRESSIVE:
+        try:
+            print("downloading direct media")
+            download_direct_media(args.url, output, headers)
+        except Exception as exc:  # noqa: BLE001 - CLI should return a user-readable error.
+            raise SystemExit(f"download failed: {exc}") from exc
+        print(f"saved {output}")
+        return
+
     if media_info.kind != MediaKind.HLS:
         if args.dump_filtered:
             raise SystemExit("--dump-filtered is only supported for HLS/m3u8 playlists")

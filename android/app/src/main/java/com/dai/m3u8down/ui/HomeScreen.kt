@@ -67,10 +67,11 @@ import com.dai2010.m3u8down.config.DownloadProfile
 import com.dai2010.m3u8down.config.ProfileStore
 import com.dai2010.m3u8down.config.ThemeMode
 import com.dai2010.m3u8down.download.DownloadManager
+import com.dai2010.m3u8down.network.mediaRequestHeaders
 import kotlinx.coroutines.launch
 import java.io.File
 
-data class DownloadItem(val id: Int, val url: String = "", val outputName: String = "video.mp4")
+data class DownloadItem(val id: Int, val url: String = "", val outputName: String = "")
 
 @Composable
 fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
@@ -89,7 +90,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     var status by rememberSaveable { mutableStateOf("等待操作") }
     var progress by rememberSaveable { mutableStateOf(0f) }
     var nextItemId by rememberSaveable { mutableIntStateOf(2) }
-    val downloadItems = remember { mutableStateListOf(DownloadItem(1, outputName = "video-001.mp4")) }
+    val downloadItems = remember { mutableStateListOf(DownloadItem(1)) }
     var profiles by remember { mutableStateOf(ProfileStore.load(context)) }
     var selectedProfileIndex by rememberSaveable { mutableIntStateOf(0) }
 
@@ -144,7 +145,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
                 if (itemIndex >= 0) downloadItems[itemIndex] = item
             },
             onAddItem = {
-                downloadItems += DownloadItem(nextItemId, outputName = "video-${nextItemId.toString().padStart(3, '0')}.mp4")
+                downloadItems += DownloadItem(nextItemId)
                 nextItemId += 1
             },
             onRemoveItem = { item -> if (downloadItems.size > 1) downloadItems.remove(item) },
@@ -170,7 +171,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
                     }
                     try {
                         val manager = DownloadManager()
-                        val headers = mapOf("Referer" to referer)
+                        val headers = mediaRequestHeaders(referer)
                         val batchCache = File(context.cacheDir, "segments/batch-${System.currentTimeMillis()}")
                         val threads = threadText.toIntOrNull()?.coerceIn(1, 64) ?: 8
                         val filterWords = if (downloadAdFilterEnabled) downloadKeywords.lines().filter { it.isNotBlank() } else emptyList()

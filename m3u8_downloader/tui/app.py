@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 from pathlib import Path
+from urllib.parse import urlparse
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -10,6 +11,7 @@ from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressB
 
 from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
 from ..config.theme import should_use_dark_theme
+from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
 from ..core.filter import filter_playlist
@@ -42,7 +44,7 @@ class M3U8DownloaderTUI(App):
         yield Header()
         with Vertical():
             yield Input(placeholder="Media URL", id="url")
-            yield Input(value=str(expand_path(profile.get("save_dir", self.config.get("save_dir", "~/Downloads"))) / "video.mp4"), placeholder="Output MP4", id="output")
+            yield Input(value="", placeholder="Output path; blank uses URL extension", id="output")
             yield Input(value=self.config.get("headers", {}).get("Referer", ""), placeholder="Referer", id="referer")
             with Horizontal():
                 yield Button("Download", id="download", variant="primary")
@@ -88,17 +90,24 @@ class M3U8DownloaderTUI(App):
 
     async def _download(self) -> None:
         url = self.query_one("#url", Input).value.strip()
-        output = expand_path(self.query_one("#output", Input).value.strip())
         if not url:
             self._write("Enter a media URL")
             return
 
-        work_dir = output.with_suffix("")
+        output_text = self.query_one("#output", Input).value.strip()
+        output = expand_path(output_text) if output_text else self._default_output_for_url(url)
+        work_dir: Path | None = None
         try:
             headers = self._headers()
             self._write("Detecting media type")
             media_info = await asyncio.to_thread(detect_media_type, url, headers)
             self._write(f"Detected {media_info.display_name}")
+            if media_info.kind == MediaKind.PROGRESSIVE:
+                self._write("Downloading direct media")
+                await asyncio.to_thread(download_direct_media, url, output, headers)
+                self._write(f"Saved {output}")
+                return
+
             require_ffmpeg()
             if media_info.kind != MediaKind.HLS:
                 self._write("Downloading with FFmpeg")
@@ -119,6 +128,7 @@ class M3U8DownloaderTUI(App):
 
             self._write(f"Downloading {len(filtered.segments)} segments")
             downloader = Downloader(threads=self._threads(), headers=headers)
+            work_dir = output.with_suffix("")
             ts_files = await asyncio.to_thread(downloader.download, filtered.segments, work_dir, progress)
             self._write("Merging segments")
             await asyncio.to_thread(merge_to_mp4, ts_files, output)
@@ -126,7 +136,7 @@ class M3U8DownloaderTUI(App):
         except Exception as exc:  # noqa: BLE001 - TUI displays concise failures.
             self._write(f"Failed: {exc}")
         finally:
-            if work_dir.exists():
+            if work_dir and work_dir.exists():
                 shutil.rmtree(work_dir)
 
     async def _start_proxy(self) -> None:
@@ -177,6 +187,14 @@ class M3U8DownloaderTUI(App):
         profile = self.profiles[self.active_profile_index]
         return list(profile.get("filter_keywords", [])) if profile.get("ad_filter", False) else []
 
+    def _default_output_for_url(self, url: str) -> Path:
+        profile = self.profiles[self.active_profile_index]
+        output_dir = expand_path(profile.get("save_dir", self.config.get("save_dir", "~/Downloads")))
+        extension = Path(urlparse(url).path).suffix.lower().lstrip(".")
+        if not extension or extension in {"m3u", "m3u8", "mpd"} or len(extension) > 5:
+            extension = "mp4"
+        return output_dir / f"video.{extension}"
+
     def _profile_index(self) -> int:
         value = self.query_one("#profile-index", Input).value.strip()
         index = int(value or "1") - 1
@@ -208,8 +226,7 @@ class M3U8DownloaderTUI(App):
         self.query_one("#profile-keywords", Input).value = " | ".join(profile.get("filter_keywords", []))
         self.query_one("#profile-threads", Input).value = str(profile.get("threads", self.config.get("threads", 16)))
         self.query_one("#profile-save-dir", Input).value = profile.get("save_dir", self.config.get("save_dir", "~/Downloads"))
-        output = expand_path(profile.get("save_dir", "~/Downloads")) / "video.mp4"
-        self.query_one("#output", Input).value = str(output)
+        self.query_one("#output", Input).value = ""
 
     def _load_profile(self) -> None:
         try:

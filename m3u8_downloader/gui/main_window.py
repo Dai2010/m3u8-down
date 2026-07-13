@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..config.manager import load_config, load_profiles
+from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
 from ..core.filter import filter_playlist
@@ -41,7 +42,6 @@ from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
 from .settings_dialog import SettingsDialog
 from .theme import apply_gui_theme
-from .windows_dependencies import ensure_ffmpeg as ensure_windows_ffmpeg
 
 
 @dataclass
@@ -81,6 +81,12 @@ class DownloadWorker(QThread):
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Detecting media type")
                 media_info = detect_media_type(task.url, headers)
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Detected {media_info.display_name}")
+                if media_info.kind == MediaKind.PROGRESSIVE:
+                    self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading direct media")
+                    download_direct_media(task.url, output, headers, cancel_callback=lambda: self._cancelled)
+                    self.log.emit(f"Saved {output}")
+                    continue
+
                 require_ffmpeg()
                 if media_info.kind != MediaKind.HLS:
                     self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading with FFmpeg")
@@ -189,8 +195,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing URL", "Add at least one media URL.")
             return
         output_dir = expand_path(self.output.text().strip())
-        if not ensure_windows_ffmpeg(self):
-            return
         config = self._runtime_config(
             self.download_referer.text().strip(),
             self.download_ad_filter.isChecked(),
@@ -305,7 +309,7 @@ class MainWindow(QMainWindow):
         if path:
             self.output.setText(path)
 
-    def _add_download_row(self, url: str = "", output_name: str = "video.mp4") -> None:
+    def _add_download_row(self, url: str = "", output_name: str = "") -> None:
         row_widget = QWidget()
         layout = QVBoxLayout(row_widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -317,7 +321,7 @@ class MainWindow(QMainWindow):
         url_row.addWidget(url_edit)
         url_row.addWidget(remove)
         output_edit = QLineEdit(output_name)
-        output_edit.setPlaceholderText("video.mp4")
+        output_edit.setPlaceholderText("留空则按 URL 自动命名")
         output_edit.setStyleSheet("margin-left: 28px;")
         layout.addLayout(url_row)
         layout.addWidget(output_edit)
@@ -336,8 +340,8 @@ class MainWindow(QMainWindow):
             url = url_edit.text().strip()
             if not url:
                 continue
-            output_name = output_edit.text().strip() or f"video-{index:03d}.mp4"
-            if output_name in {"video.mp4", f"video-{index:03d}.mp4"}:
+            output_name = output_edit.text().strip()
+            if not output_name or output_name in {"video.mp4", f"video-{index:03d}.mp4"}:
                 output_name = _output_name_for_url(url, index, output_name)
             tasks.append(DownloadTask(url, output_name))
         return tasks
@@ -457,7 +461,7 @@ class MainWindow(QMainWindow):
         self.download_rows_layout = QVBoxLayout()
         add_url = QPushButton("添加 URL")
         add_url.setObjectName("secondary")
-        add_url.clicked.connect(lambda: self._add_download_row(output_name=f"video-{len(self.download_rows) + 1:03d}.mp4"))
+        add_url.clicked.connect(lambda: self._add_download_row())
 
         form = QFormLayout()
         form.addRow("Referer，可留空", self.download_referer)

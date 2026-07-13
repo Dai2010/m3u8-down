@@ -35,6 +35,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import com.dai2010.m3u8down.media.MediaKind
 import com.dai2010.m3u8down.media.MediaTypeDetector
+import com.dai2010.m3u8down.network.mediaRequestHeaders
 import com.dai2010.m3u8down.parser.M3U8Parser
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -90,7 +91,7 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
 
     LaunchedEffect(url, referer, adFilterEnabled, keywords) {
         try {
-            val headers = if (referer.isBlank()) emptyMap() else mapOf("Referer" to referer)
+            val headers = mediaRequestHeaders(referer)
             val info = withContext(Dispatchers.IO) { MediaTypeDetector.detect(url, headers) }
             mediaKind = info.kind.name
             status = "已识别：${info.kind.displayName}"
@@ -109,7 +110,7 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     val player = remember(mediaUri, referer, mediaKind) {
         if (mediaUri.isBlank()) return@remember null
         val httpFactory = DefaultHttpDataSource.Factory()
-        if (referer.isNotBlank()) httpFactory.setDefaultRequestProperties(mapOf("Referer" to referer))
+        httpFactory.setDefaultRequestProperties(mediaRequestHeaders(referer))
         val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
         val kind = runCatching { MediaKind.valueOf(mediaKind) }.getOrDefault(MediaKind.UNKNOWN)
         val item = MediaItem.Builder().setUri(mediaUri).setMimeType(kind.mimeType()).build()
@@ -152,9 +153,10 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
 
 private fun createFilteredPlaylist(cacheDir: File, url: String, referer: String, keywords: List<String>): String {
     val client = OkHttpClient()
+    val headers = mediaRequestHeaders(referer)
     fun fetchText(target: String): String {
         val builder = Request.Builder().url(target)
-        if (referer.isNotBlank()) builder.header("Referer", referer)
+        headers.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
         client.newCall(builder.build()).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}: $target")
             return response.body?.string() ?: error("empty response body: $target")

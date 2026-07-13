@@ -32,6 +32,13 @@ class DownloadManager(
         emit(DownloadProgress(0, 0, "Detecting media type"))
         val mediaInfo = MediaTypeDetector.detect(url, headers, client)
         emit(DownloadProgress(0, 0, "Detected ${mediaInfo.kind.displayName}"))
+        if (mediaInfo.kind == MediaKind.PROGRESSIVE) {
+            emit(DownloadProgress(0, 1, "Downloading direct media"))
+            DirectDownloader(client, headers).download(url, outputFile)
+            emit(DownloadProgress(1, 1, "Saved ${outputFile.absolutePath}"))
+            return@flow
+        }
+
         if (mediaInfo.kind != MediaKind.HLS) {
             emit(DownloadProgress(0, 1, "Downloading with FFmpeg"))
             check(Merger.saveMediaUrl(url, outputFile, headers)) { "ffmpeg download failed" }
