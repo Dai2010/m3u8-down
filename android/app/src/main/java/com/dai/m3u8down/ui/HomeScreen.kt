@@ -165,7 +165,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
                 scope.launch {
                     val tasks = downloadItems.filter { it.url.isNotBlank() }
                     if (tasks.isEmpty()) {
-                        status = "请至少添加一个 m3u8 URL"
+                        status = "请至少添加一个媒体 URL"
                         return@launch
                     }
                     try {
@@ -176,7 +176,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
                         val filterWords = if (downloadAdFilterEnabled) downloadKeywords.lines().filter { it.isNotBlank() } else emptyList()
                         try {
                             tasks.forEachIndexed { index, item ->
-                                val fileName = item.outputName.ifBlank { "video-${(index + 1).toString().padStart(3, '0')}.mp4" }
+                                val fileName = item.outputName.ifBlank { outputNameFor(item.url, index) }
                                 val finalOutput = if (downloadTreeUri.isBlank()) File(context.getExternalFilesDir(null), fileName) else File(context.cacheDir, "exports/$fileName")
                                 val taskCache = File(batchCache, "url-${index + 1}")
                                 taskCache.deleteRecursively()
@@ -293,7 +293,7 @@ private fun DownloadModeScreen(profiles: List<DownloadProfile>, selectedIndex: I
 @Composable
 private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, onPlay: () -> Unit, onBack: () -> Unit) {
     FormScreen("流播", onBack) {
-        LabeledField("m3u8 地址") { OutlinedTextField(url, onUrlChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+        LabeledField("媒体地址") { OutlinedTextField(url, onUrlChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
         if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
@@ -307,7 +307,7 @@ private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadIte
         items.forEach { item ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(item.url, { onItemChange(item.copy(url = it)) }, label = { Text("m3u8 地址") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(item.url, { onItemChange(item.copy(url = it)) }, label = { Text("媒体地址") }, singleLine = true, modifier = Modifier.weight(1f))
                     IconButton(onClick = { onRemoveItem(item) }) { Icon(Icons.Default.Delete, "删除") }
                 }
                 OutlinedTextField(item.outputName, { onItemChange(item.copy(outputName = it)) }, label = { Text("输出文件名") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(start = 28.dp))
@@ -477,9 +477,35 @@ private fun profileSummary(profile: DownloadProfile): String = "备注：${profi
 
 private fun currentSavePath(context: Context, treeUri: String): String = if (treeUri.isBlank()) context.getExternalFilesDir(null)?.absolutePath.orEmpty() else Uri.parse(treeUri).lastPathSegment ?: treeUri
 
+private fun outputNameFor(url: String, index: Int): String {
+    val rawExtension = Uri.parse(url).lastPathSegment
+        ?.substringAfterLast('.', missingDelimiterValue = "")
+        ?.takeIf { it.length in 2..5 }
+        ?.lowercase()
+    val extension = when (rawExtension) {
+        "m3u", "m3u8", "mpd" -> "mp4"
+        null, "" -> "mp4"
+        else -> rawExtension
+    }
+    return "video-${(index + 1).toString().padStart(3, '0')}.$extension"
+}
+
 private fun copyToTree(context: Context, source: File, treeUri: Uri, fileName: String) {
     val directory = DocumentFile.fromTreeUri(context, treeUri) ?: error("selected folder is unavailable")
     directory.findFile(fileName)?.delete()
-    val target = directory.createFile("video/mp4", fileName) ?: error("cannot create output file")
+    val target = directory.createFile(mimeTypeFor(fileName), fileName) ?: error("cannot create output file")
     context.contentResolver.openOutputStream(target.uri)?.use { output -> source.inputStream().use { input -> input.copyTo(output) } } ?: error("cannot open output file")
+}
+
+private fun mimeTypeFor(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
+    "mp4", "m4v" -> "video/mp4"
+    "mkv" -> "video/x-matroska"
+    "webm" -> "video/webm"
+    "mov" -> "video/quicktime"
+    "mp3" -> "audio/mpeg"
+    "m4a" -> "audio/mp4"
+    "aac" -> "audio/aac"
+    "ogg", "opus" -> "audio/ogg"
+    "wav" -> "audio/wav"
+    else -> "application/octet-stream"
 }

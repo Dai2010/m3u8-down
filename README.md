@@ -7,6 +7,8 @@
 ## 功能
 
 - 解析媒体播放列表和主播放列表，支持自动选择最高码率变体。
+- 开始下载或流播后才识别媒体类型，避免在输入阶段额外请求目标站点。
+- 支持 HLS/m3u8、DASH/mpd、Smooth Streaming、RTSP 和常见直链音视频；HLS 继续使用内部分片下载，其他格式通过 FFmpeg/ExoPlayer 兜底。
 - 按关键词或正则过滤广告片段。
 - 多线程下载 TS 分片，支持 `.part` 临时文件和已完成分片跳过。
 - 调用 FFmpeg 将分片合并为 MP4。
@@ -33,6 +35,13 @@ pip install -r requirements.txt
 
 ```bash
 python -m m3u8_downloader "https://example.com/video/index.m3u8" -o video.mp4
+```
+
+也可以传入 DASH、Smooth Streaming、RTSP 或常见音视频直链；程序会在开始下载时识别类型并选择对应下载方式：
+
+```bash
+python -m m3u8_downloader "https://example.com/video/manifest.mpd" -o video.mp4
+python -m m3u8_downloader "https://example.com/video/movie.mp4" -o movie.mp4
 ```
 
 直接打开终端 TUI：
@@ -65,7 +74,7 @@ python -m m3u8_downloader.gui.app
 python -m m3u8_downloader.tui.app
 ```
 
-流播代理会输出本地播放地址，可复制到 mpv 或 VLC：
+HLS 流播代理会输出本地播放地址，可复制到 mpv 或 VLC；非 HLS 媒体会直接输出原播放地址：
 
 ```text
 http://127.0.0.1:8888/stream.m3u8?src=...
@@ -92,8 +101,8 @@ Android APK 面向不依赖 GMS 的侧载安装场景，当前优先发布 `arm6
 
 Windows 版本由 GitHub Actions Release workflow 在 `windows-latest` 上构建，产物包括：
 
-- `m3u8-downloader-4.0.1-windows-x64.exe`
-- `m3u8-downloader-4.0.1-windows-x64.msi`
+- `m3u8-downloader-4.1.0-windows-x64.exe`
+- `m3u8-downloader-4.1.0-windows-x64.msi`
 
 Windows `.exe` 安装器和 `.msi` 都会安装 GUI、CLI 和 TUI 三个入口，并把安装目录加入 PATH，PowerShell 中可直接运行：
 
@@ -134,10 +143,10 @@ ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8
 Linux deb 构建示例：
 
 ```bash
-packaging/linux/build_deb.sh 4.0.1
+packaging/linux/build_deb.sh 4.1.0
 ```
 
-发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.0.1`。
+发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.1.0`。
 
 ## 发布产物
 
@@ -146,6 +155,6 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 当前发布资产包括：
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
-- `m3u8-downloader_4.0.1_amd64.deb`
-- `m3u8-downloader-4.0.1-windows-x64.exe`
-- `m3u8-downloader-4.0.1-windows-x64.msi`
+- `m3u8-downloader_4.1.0_amd64.deb`
+- `m3u8-downloader-4.1.0-windows-x64.exe`
+- `m3u8-downloader-4.1.0-windows-x64.msi`

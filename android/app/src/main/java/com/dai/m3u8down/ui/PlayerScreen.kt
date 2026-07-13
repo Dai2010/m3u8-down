@@ -33,16 +33,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
+import com.dai2010.m3u8down.media.MediaKind
+import com.dai2010.m3u8down.media.MediaTypeDetector
 import com.dai2010.m3u8down.parser.M3U8Parser
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -81,30 +84,36 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     }
     var playbackPosition by rememberSaveable(url) { mutableLongStateOf(0L) }
     var shouldPlay by rememberSaveable(url) { mutableStateOf(true) }
-    var mediaUri by rememberSaveable(url, adFilterEnabled, keywords) { mutableStateOf(if (adFilterEnabled) "" else url) }
-    var status by rememberSaveable(url, adFilterEnabled, keywords) { mutableStateOf(if (adFilterEnabled) "正在准备过滤播放列表" else "") }
+    var mediaUri by rememberSaveable(url, adFilterEnabled, keywords) { mutableStateOf("") }
+    var mediaKind by rememberSaveable(url, adFilterEnabled, keywords) { mutableStateOf(MediaKind.UNKNOWN.name) }
+    var status by rememberSaveable(url, adFilterEnabled, keywords) { mutableStateOf("正在识别媒体类型") }
 
     LaunchedEffect(url, referer, adFilterEnabled, keywords) {
-        if (!adFilterEnabled) {
-            mediaUri = url
-            status = ""
-            return@LaunchedEffect
-        }
         try {
-            mediaUri = withContext(Dispatchers.IO) { createFilteredPlaylist(context.cacheDir, url, referer, keywords) }
+            val headers = if (referer.isBlank()) emptyMap() else mapOf("Referer" to referer)
+            val info = withContext(Dispatchers.IO) { MediaTypeDetector.detect(url, headers) }
+            mediaKind = info.kind.name
+            status = "已识别：${info.kind.displayName}"
+            mediaUri = if (adFilterEnabled && info.kind == MediaKind.HLS) {
+                status = "正在准备过滤播放列表"
+                withContext(Dispatchers.IO) { createFilteredPlaylist(context.cacheDir, url, referer, keywords) }
+            } else {
+                url
+            }
             status = ""
         } catch (exc: Exception) {
-            status = "过滤失败：${exc.message ?: exc.javaClass.simpleName}"
+            status = "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
         }
     }
 
-    val player = remember(mediaUri, referer) {
+    val player = remember(mediaUri, referer, mediaKind) {
         if (mediaUri.isBlank()) return@remember null
         val httpFactory = DefaultHttpDataSource.Factory()
         if (referer.isNotBlank()) httpFactory.setDefaultRequestProperties(mapOf("Referer" to referer))
         val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
-        val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri(mediaUri))
+        val kind = runCatching { MediaKind.valueOf(mediaKind) }.getOrDefault(MediaKind.UNKNOWN)
+        val item = MediaItem.Builder().setUri(mediaUri).setMimeType(kind.mimeType()).build()
+        val mediaSource = DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(item)
         ExoPlayer.Builder(context).build().apply {
             setMediaSource(mediaSource)
             prepare()
@@ -215,3 +224,10 @@ private fun rewriteTagUris(line: String, baseUrl: String): String =
         val resolved = if (URI(uri).isAbsolute) uri else M3U8Parser.resolveUrl(baseUrl, uri)
         "URI=\"$resolved\""
     }
+
+private fun MediaKind.mimeType(): String? = when (this) {
+    MediaKind.HLS -> MimeTypes.APPLICATION_M3U8
+    MediaKind.DASH -> MimeTypes.APPLICATION_MPD
+    MediaKind.SMOOTH -> MimeTypes.APPLICATION_SS
+    MediaKind.RTSP, MediaKind.PROGRESSIVE, MediaKind.UNKNOWN -> null
+}

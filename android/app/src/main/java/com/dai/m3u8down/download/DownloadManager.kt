@@ -1,6 +1,8 @@
 package com.dai2010.m3u8down.download
 
 import com.dai2010.m3u8down.filter.AdFilter
+import com.dai2010.m3u8down.media.MediaKind
+import com.dai2010.m3u8down.media.MediaTypeDetector
 import com.dai2010.m3u8down.parser.M3U8Parser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -27,6 +29,16 @@ class DownloadManager(
         keywords: List<String>,
         concurrency: Int = 8,
     ): Flow<DownloadProgress> = flow {
+        emit(DownloadProgress(0, 0, "Detecting media type"))
+        val mediaInfo = MediaTypeDetector.detect(url, headers, client)
+        emit(DownloadProgress(0, 0, "Detected ${mediaInfo.kind.displayName}"))
+        if (mediaInfo.kind != MediaKind.HLS) {
+            emit(DownloadProgress(0, 1, "Downloading with FFmpeg"))
+            check(Merger.saveMediaUrl(url, outputFile, headers)) { "ffmpeg download failed" }
+            emit(DownloadProgress(1, 1, "Saved ${outputFile.absolutePath}"))
+            return@flow
+        }
+
         emit(DownloadProgress(0, 0, "Loading playlist"))
         val content = fetchText(url, headers)
         val parsed = M3U8Parser.parse(content, url)

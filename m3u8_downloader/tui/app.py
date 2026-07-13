@@ -11,7 +11,9 @@ from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressB
 from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
 from ..config.theme import should_use_dark_theme
 from ..core.downloader import Downloader
+from ..core.ffmpeg_downloader import download_with_ffmpeg
 from ..core.filter import filter_playlist
+from ..core.media_type import MediaKind, detect_media_type
 from ..core.merger import merge_to_mp4
 from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
@@ -39,7 +41,7 @@ class M3U8DownloaderTUI(App):
         profile = self.profiles[self.active_profile_index]
         yield Header()
         with Vertical():
-            yield Input(placeholder="m3u8 URL", id="url")
+            yield Input(placeholder="Media URL", id="url")
             yield Input(value=str(expand_path(profile.get("save_dir", self.config.get("save_dir", "~/Downloads"))) / "video.mp4"), placeholder="Output MP4", id="output")
             yield Input(value=self.config.get("headers", {}).get("Referer", ""), placeholder="Referer", id="referer")
             with Horizontal():
@@ -88,13 +90,22 @@ class M3U8DownloaderTUI(App):
         url = self.query_one("#url", Input).value.strip()
         output = expand_path(self.query_one("#output", Input).value.strip())
         if not url:
-            self._write("Enter an m3u8 URL")
+            self._write("Enter a media URL")
             return
 
         work_dir = output.with_suffix("")
         try:
             headers = self._headers()
+            self._write("Detecting media type")
+            media_info = await asyncio.to_thread(detect_media_type, url, headers)
+            self._write(f"Detected {media_info.display_name}")
             require_ffmpeg()
+            if media_info.kind != MediaKind.HLS:
+                self._write("Downloading with FFmpeg")
+                await asyncio.to_thread(download_with_ffmpeg, url, output, headers)
+                self._write(f"Saved {output}")
+                return
+
             self._write("Loading playlist")
             playlist = await asyncio.to_thread(_load_media_playlist, url, headers)
             filtered = filter_playlist(playlist, self._filter_keywords())
@@ -121,14 +132,21 @@ class M3U8DownloaderTUI(App):
     async def _start_proxy(self) -> None:
         url = self.query_one("#url", Input).value.strip()
         if not url:
-            self._write("Enter an m3u8 URL")
+            self._write("Enter a media URL")
             return
         if self.proxy:
             self._write(self.proxy.get_stream_url(url))
             return
+        headers = self._headers()
+        media_info = await asyncio.to_thread(detect_media_type, url, headers)
+        self._write(f"Detected {media_info.display_name}")
+        if media_info.kind != MediaKind.HLS:
+            self._write(f"Playback URL: {url}")
+            return
+
         self.proxy = ProxyServer(
             port=int(self.config.get("proxy_port", 8888)),
-            headers=self._headers(),
+            headers=headers,
             filter_keywords=self._filter_keywords(),
         )
         await self.proxy.start()

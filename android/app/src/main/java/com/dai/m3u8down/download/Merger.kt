@@ -20,4 +20,18 @@ object Merger {
             listFile.delete()
         }
     }
+
+    suspend fun saveMediaUrl(url: String, outputFile: File, headers: Map<String, String> = emptyMap()): Boolean = withContext(Dispatchers.IO) {
+        outputFile.parentFile?.mkdirs()
+        val command = mutableListOf("-y")
+        val headerBlock = headers
+            .filterValues { it.isNotBlank() }
+            .map { (name, value) -> "${name}: ${value}\r\n" }
+            .joinToString("")
+        if (headerBlock.isNotBlank()) command += listOf("-headers", headerBlock)
+        command += listOf("-i", url, "-c", "copy", outputFile.absolutePath)
+        val session = FFmpegKit.executeWithArguments(command.toTypedArray())
+        ReturnCode.isSuccess(session.returnCode)
+    }
+
 }

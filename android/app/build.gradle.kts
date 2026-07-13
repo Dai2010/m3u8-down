@@ -14,8 +14,8 @@ android {
         applicationId = "com.dai2010.m3u8down"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10
-        versionName = "4.0.1"
+        versionCode = 11
+        versionName = "4.1.0"
 
     }
 
@@ -66,7 +66,10 @@ dependencies {
     implementation("androidx.media3:media3-common:1.4.1")
     implementation("androidx.media3:media3-datasource:1.4.1")
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.4.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.4.1")
+    implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("com.arthenica:ffmpeg-kit-full:6.0-2")
 

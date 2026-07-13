@@ -4,6 +4,7 @@ import shutil
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -31,7 +32,9 @@ from PyQt6.QtWidgets import (
 
 from ..config.manager import load_config, load_profiles
 from ..core.downloader import Downloader
+from ..core.ffmpeg_downloader import download_with_ffmpeg
 from ..core.filter import filter_playlist
+from ..core.media_type import MediaKind, detect_media_type
 from ..core.merger import merge_to_mp4
 from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
@@ -70,12 +73,21 @@ class DownloadWorker(QThread):
             keywords = self.config.get("filter_keywords", [])
             threads = int(self.config.get("threads", 16))
 
-            require_ffmpeg()
             for task_index, task in enumerate(self.tasks, start=1):
                 if self._cancelled:
                     raise RuntimeError("download cancelled")
                 output = self.output_dir / task.output_name
                 work_dir = work_root / str(task_index)
+                self.log.emit(f"[{task_index}/{len(self.tasks)}] Detecting media type")
+                media_info = detect_media_type(task.url, headers)
+                self.log.emit(f"[{task_index}/{len(self.tasks)}] Detected {media_info.display_name}")
+                require_ffmpeg()
+                if media_info.kind != MediaKind.HLS:
+                    self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading with FFmpeg")
+                    download_with_ffmpeg(task.url, output, headers)
+                    self.log.emit(f"Saved {output}")
+                    continue
+
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Loading playlist")
                 playlist = _load_media_playlist(task.url, headers)
                 filtered = filter_playlist(playlist, keywords)
@@ -101,7 +113,7 @@ class DownloadWorker(QThread):
 
 
 class ProxyWorker(QThread):
-    started_url = pyqtSignal(str)
+    started_url = pyqtSignal(str, str)
     failed = pyqtSignal(str)
 
     def __init__(self, url: str, config: dict, parent=None):
@@ -115,7 +127,10 @@ class ProxyWorker(QThread):
     def run(self) -> None:
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self._run())
+        try:
+            self.loop.run_until_complete(self._run())
+        finally:
+            self.loop.close()
 
     def stop(self) -> None:
         if self.loop and self.stop_event:
@@ -124,13 +139,18 @@ class ProxyWorker(QThread):
     async def _run(self) -> None:
         try:
             headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
+            media_info = detect_media_type(self.url, headers)
+            if media_info.kind != MediaKind.HLS:
+                self.started_url.emit(self.url, media_info.display_name)
+                return
+
             self.server = ProxyServer(
                 port=int(self.config.get("proxy_port", 8888)),
                 headers=headers,
                 filter_keywords=self.config.get("filter_keywords", []),
             )
             await self.server.start()
-            self.started_url.emit(self.server.get_stream_url(self.url))
+            self.started_url.emit(self.server.get_stream_url(self.url), media_info.display_name)
             self.stop_event = asyncio.Event()
             await self.stop_event.wait()
         except Exception as exc:  # noqa: BLE001 - show concise GUI error.
@@ -138,8 +158,6 @@ class ProxyWorker(QThread):
         finally:
             if self.server:
                 await self.server.stop()
-            if self.loop:
-                self.loop.close()
 
 
 class MainWindow(QMainWindow):
@@ -168,7 +186,7 @@ class MainWindow(QMainWindow):
             return
         tasks = self._download_tasks()
         if not tasks:
-            QMessageBox.warning(self, "Missing URL", "Add at least one m3u8 URL.")
+            QMessageBox.warning(self, "Missing URL", "Add at least one media URL.")
             return
         output_dir = expand_path(self.output.text().strip())
         if not ensure_windows_ffmpeg(self):
@@ -201,7 +219,7 @@ class MainWindow(QMainWindow):
     def _start_proxy(self) -> None:
         url = self.stream_url.text().strip()
         if not url:
-            QMessageBox.warning(self, "Missing URL", "Enter an m3u8 URL.")
+            QMessageBox.warning(self, "Missing URL", "Enter a media URL.")
             return
         config = self._runtime_config(
             self.stream_referer.text().strip(),
@@ -213,6 +231,7 @@ class MainWindow(QMainWindow):
         self.proxy_worker = ProxyWorker(url, config, self)
         self.proxy_worker.started_url.connect(self._proxy_started)
         self.proxy_worker.failed.connect(self._proxy_failed)
+        self.proxy_worker.finished.connect(self._proxy_finished)
         self.proxy_worker.start()
 
     def _stop_proxy(self) -> None:
@@ -223,15 +242,22 @@ class MainWindow(QMainWindow):
         self.stop_proxy_button.setEnabled(False)
         self._append_stream_log("Proxy stopped")
 
-    def _proxy_started(self, proxy_url: str) -> None:
-        self._append_stream_log(f"Proxy URL: {proxy_url}")
-        self.stream_status.setText("Proxy running")
+    def _proxy_started(self, proxy_url: str, media_name: str) -> None:
+        self._append_stream_log(f"Detected {media_name}")
+        self._append_stream_log(f"Playback URL: {proxy_url}")
+        self.stream_status.setText("Proxy running" if self.proxy_worker and self.proxy_worker.server else "Direct media URL")
 
     def _proxy_failed(self, message: str) -> None:
         self._append_stream_log(f"Proxy failed: {message}")
         self.proxy_button.setEnabled(True)
         self.stop_proxy_button.setEnabled(False)
         QMessageBox.critical(self, "Proxy failed", message)
+
+    def _proxy_finished(self) -> None:
+        if self.proxy_worker and self.proxy_worker.server:
+            return
+        self.proxy_button.setEnabled(True)
+        self.stop_proxy_button.setEnabled(False)
 
     def _update_progress(self, done: int, total: int) -> None:
         value = int(done / total * 100) if total else 100
@@ -285,7 +311,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         url_row = QHBoxLayout()
         url_edit = QLineEdit(url)
-        url_edit.setPlaceholderText("https://example.com/video/index.m3u8")
+        url_edit.setPlaceholderText("https://example.com/video/index.m3u8 or video.mp4")
         remove = QPushButton("删除")
         remove.setObjectName("secondary")
         url_row.addWidget(url_edit)
@@ -311,6 +337,8 @@ class MainWindow(QMainWindow):
             if not url:
                 continue
             output_name = output_edit.text().strip() or f"video-{index:03d}.mp4"
+            if output_name in {"video.mp4", f"video-{index:03d}.mp4"}:
+                output_name = _output_name_for_url(url, index, output_name)
             tasks.append(DownloadTask(url, output_name))
         return tasks
 
@@ -368,7 +396,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(self._header_row("流播"))
 
         self.stream_url = QLineEdit()
-        self.stream_url.setPlaceholderText("https://example.com/video/index.m3u8")
+        self.stream_url.setPlaceholderText("https://example.com/video/index.m3u8 or video.mp4")
         self.stream_referer = QLineEdit(self.config.get("headers", {}).get("Referer", ""))
         self.stream_ad_filter = QCheckBox("启用去广告过滤")
         self.stream_ad_filter.toggled.connect(self._sync_filter_visibility)
@@ -377,7 +405,7 @@ class MainWindow(QMainWindow):
         self.stream_keywords_label = QLabel("过滤关键词，每行一个")
 
         form = QFormLayout()
-        form.addRow("m3u8 地址", self.stream_url)
+        form.addRow("媒体地址", self.stream_url)
         form.addRow("Referer，可留空", self.stream_referer)
         form.addRow("", self.stream_ad_filter)
         form.addRow(self.stream_keywords_label, self.stream_keywords)
@@ -552,3 +580,11 @@ def profile_summary(profile: dict) -> str:
         f"过滤：{'开启' if profile.get('ad_filter') else '关闭'}；关键词：{keywords}\n"
         f"线程：{profile.get('threads', 16)}；保存目录：{profile.get('save_dir', '~/Downloads')}"
     )
+
+
+def _output_name_for_url(url: str, index: int, current: str) -> str:
+    extension = Path(urlparse(url).path).suffix.lower().lstrip(".")
+    if not extension or extension in {"m3u", "m3u8", "mpd"} or len(extension) > 5:
+        extension = "mp4"
+    stem = "video" if current == "video.mp4" else f"video-{index:03d}"
+    return f"{stem}.{extension}"

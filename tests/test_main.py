@@ -1,6 +1,7 @@
 import sys
 
 import m3u8_downloader.main as main_module
+from m3u8_downloader.core.media_type import MediaInfo, MediaKind
 from m3u8_downloader.main import _load_media_playlist
 
 
@@ -46,3 +47,26 @@ def test_main_without_url_launches_tui(monkeypatch):
     main_module.main()
 
     assert calls == ["tui"]
+
+
+def test_main_downloads_non_hls_with_ffmpeg(monkeypatch, tmp_path, capsys):
+    calls = []
+    output = tmp_path / "video.mp4"
+
+    monkeypatch.setattr(sys, "argv", ["m3u8-downloader", "https://cdn.test/video.mp4", "-o", str(output)])
+    monkeypatch.setattr(main_module, "setup_logging", lambda: None)
+    monkeypatch.setattr(main_module, "load_config", lambda: {"headers": {}, "filter_keywords": [], "threads": 16})
+    monkeypatch.setattr(main_module, "detect_media_type", lambda url, headers: MediaInfo(MediaKind.PROGRESSIVE, "url"))
+    monkeypatch.setattr(main_module, "require_ffmpeg", lambda: None)
+    monkeypatch.setattr(main_module, "download_with_ffmpeg", lambda url, target, headers: calls.append((url, target, headers)))
+    monkeypatch.setattr(main_module, "_load_media_playlist", lambda *args: (_ for _ in ()).throw(AssertionError("should not load hls playlist")))
+
+    main_module.main()
+
+    assert calls == [("https://cdn.test/video.mp4", output, {})]
+    assert "detected direct media" in capsys.readouterr().out
+
+
+def test_default_output_uses_direct_media_extension():
+    assert main_module._default_output_for_url("https://cdn.test/movie.webm?token=1") == "video.webm"
+    assert main_module._default_output_for_url("https://cdn.test/master.m3u8") == "video.mp4"

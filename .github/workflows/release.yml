@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag, for example v4.0.1
+        description: Release tag, for example v4.1.0
         required: true
-        default: v4.0.1-windows-fix1
+        default: v4.1.0
   push:
     tags:
       - "v*"
@@ -50,12 +50,17 @@ jobs:
           CI_MAVEN_REPOS: official
         run: gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1
       - name: Build deb
-        run: bash packaging/linux/build_deb.sh 4.0.1
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          bash packaging/linux/build_deb.sh "$version"
       - name: Collect assets
         run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
           mkdir -p dist
           cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk dist/m3u8-downloader-android-arm64-v8a-debug.apk
-          cp build/release/m3u8-downloader_4.0.1_amd64.deb dist/
+          cp "build/release/m3u8-downloader_${version}_amd64.deb" dist/
           sha256sum dist/* > dist/SHA256SUMS-linux-android.txt
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
