@@ -14,8 +14,8 @@ android {
         applicationId = "com.dai2010.m3u8down"
         minSdk = 29
         targetSdk = 35
-        versionCode = 12
-        versionName = "4.1.1"
+        versionCode = 13
+        versionName = "4.2.0"
 
     }
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -22,7 +24,7 @@ from PyQt6.QtWidgets import (
 
 from .. import __version__
 from ..config.manager import delete_profile, new_profile, save_profiles, upsert_profile
-from ..config.theme import THEME_OPTIONS
+from ..config.theme import THEME_OPTIONS, normalize_button_color
 
 
 class SettingsDialog(QDialog):
@@ -56,6 +58,19 @@ class SettingsDialog(QDialog):
         index = self.theme.findText(str(config.get("theme", "system")))
         self.theme.setCurrentIndex(max(0, index))
 
+        self.button_color = QLineEdit(str(config.get("button_color", "")))
+        self.button_color.setPlaceholderText("默认主题色，或 #146C5A")
+        color_picker = QPushButton("调色版")
+        color_picker.setObjectName("secondary")
+        color_picker.clicked.connect(self._choose_button_color)
+        color_reset = QPushButton("默认")
+        color_reset.setObjectName("secondary")
+        color_reset.clicked.connect(lambda: self.button_color.clear())
+        color_row = QHBoxLayout()
+        color_row.addWidget(self.button_color)
+        color_row.addWidget(color_picker)
+        color_row.addWidget(color_reset)
+
         self.general_tab = QWidget()
         general_form = QFormLayout(self.general_tab)
         general_form.addRow("线程数", self.threads)
@@ -64,16 +79,18 @@ class SettingsDialog(QDialog):
         general_form.addRow("User-Agent", self.user_agent)
         general_form.addRow("过滤关键词", self.keywords)
 
-        self.theme_tab = QWidget()
-        theme_form = QFormLayout(self.theme_tab)
-        theme_form.addRow("主题", self.theme)
+        self.appearance_tab = QWidget()
+        appearance_form = QFormLayout(self.appearance_tab)
+        appearance_form.addRow("外观", QLabel("主题与按钮颜色集中在这里。留空按钮色会使用主题默认色。"))
+        appearance_form.addRow("主题", self.theme)
+        appearance_form.addRow("按钮颜色", color_row)
 
         self.profiles_tab = self._build_profiles_tab()
         self.about_tab = self._build_about_tab()
 
         tabs = QTabWidget()
         tabs.addTab(self.general_tab, "常规")
-        tabs.addTab(self.theme_tab, "主题")
+        tabs.addTab(self.appearance_tab, "外观")
         tabs.addTab(self.profiles_tab, "配置管理")
         tabs.addTab(self.about_tab, "关于")
 
@@ -96,6 +113,7 @@ class SettingsDialog(QDialog):
         }
         config["filter_keywords"] = [line.strip() for line in self.keywords.toPlainText().splitlines() if line.strip()]
         config["theme"] = self.theme.currentText()
+        config["button_color"] = normalize_button_color(self.button_color.text())
         return config
 
     def accept(self) -> None:
@@ -107,6 +125,12 @@ class SettingsDialog(QDialog):
         directory = QFileDialog.getExistingDirectory(self, "选择保存目录", self.save_dir.text())
         if directory:
             self.save_dir.setText(directory)
+
+    def _choose_button_color(self) -> None:
+        current = normalize_button_color(self.button_color.text()) or "#146C5A"
+        color = QColorDialog.getColor(QColor(current), self, "选择按钮颜色")
+        if color.isValid():
+            self.button_color.setText(color.name().upper())
 
     def _build_profiles_tab(self) -> QWidget:
         page = QWidget()

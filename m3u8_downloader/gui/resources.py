@@ -13,8 +13,17 @@ QLineEdit, QTextEdit, QSpinBox, QComboBox {
     border-radius: 6px;
     padding: 8px;
 }
+QPlainTextEdit#playlistPreview {
+    background: #fbf7ec;
+    color: #26302b;
+    border: 1px solid #d9cda8;
+    border-radius: 8px;
+    padding: 12px;
+    selection-background-color: __BUTTON_COLOR__;
+    selection-color: #ffffff;
+}
 QPushButton {
-    background: #146c5a;
+    background: __BUTTON_COLOR__;
     color: #ffffff;
     border: 0;
     border-radius: 6px;
@@ -32,7 +41,7 @@ QPushButton#entry {
     font-size: 17px;
     font-weight: 700;
 }
-QPushButton#entry:hover { background: #eef8f3; border-color: #6fb39d; }
+QPushButton#entry:hover { background: #eef8f3; border-color: __BUTTON_HOVER_COLOR__; }
 QProgressBar {
     background: #ffffff;
     color: #1e2421;
@@ -40,7 +49,7 @@ QProgressBar {
     border-radius: 6px;
     text-align: center;
 }
-QProgressBar::chunk { background: #2f8f72; border-radius: 5px; }
+QProgressBar::chunk { background: __BUTTON_COLOR__; border-radius: 5px; }
 """
 
 DARK_QSS = """
@@ -56,8 +65,17 @@ QLineEdit, QTextEdit, QSpinBox, QComboBox {
     border-radius: 6px;
     padding: 8px;
 }
+QPlainTextEdit#playlistPreview {
+    background: #202820;
+    color: #e8ead8;
+    border: 1px solid #55614f;
+    border-radius: 8px;
+    padding: 12px;
+    selection-background-color: __BUTTON_COLOR__;
+    selection-color: #101815;
+}
 QPushButton {
-    background: #33a383;
+    background: __BUTTON_COLOR__;
     color: #ffffff;
     border: 0;
     border-radius: 6px;
@@ -75,7 +93,7 @@ QPushButton#entry {
     font-size: 17px;
     font-weight: 700;
 }
-QPushButton#entry:hover { background: #293b34; border-color: #45c79d; }
+QPushButton#entry:hover { background: #293b34; border-color: __BUTTON_HOVER_COLOR__; }
 QProgressBar {
     background: #242c28;
     color: #edf4ef;
@@ -83,9 +101,30 @@ QProgressBar {
     border-radius: 6px;
     text-align: center;
 }
-QProgressBar::chunk { background: #45c79d; border-radius: 5px; }
+QProgressBar::chunk { background: __BUTTON_COLOR__; border-radius: 5px; }
 """
 
 
-def stylesheet(is_dark: bool) -> str:
-    return DARK_QSS if is_dark else LIGHT_QSS
+def stylesheet(is_dark: bool, button_color: str = "") -> str:
+    color = button_color or ("#33a383" if is_dark else "#146c5a")
+    return (DARK_QSS if is_dark else LIGHT_QSS).replace("__BUTTON_COLOR__", color).replace(
+        "__BUTTON_HOVER_COLOR__",
+        _mix_color(color, "#ffffff" if is_dark else "#f4f7f5", 0.25),
+    )
+
+
+def _mix_color(color: str, other: str, ratio: float) -> str:
+    try:
+        source = _rgb(color)
+        target = _rgb(other)
+    except ValueError:
+        return color
+    mixed = [round(source[index] * (1 - ratio) + target[index] * ratio) for index in range(3)]
+    return "#" + "".join(f"{value:02X}" for value in mixed)
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    value = color.strip().lstrip("#")
+    if len(value) != 6:
+        raise ValueError("expected #RRGGBB color")
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)

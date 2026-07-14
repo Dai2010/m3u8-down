@@ -20,6 +20,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.dai2010.m3u8down.config.ThemeMode
 import com.dai2010.m3u8down.config.ThemeStore
+import com.dai2010.m3u8down.config.normalizeHexColor
 import com.dai2010.m3u8down.ui.HomeScreen
 
 class MainActivity : ComponentActivity() {
@@ -27,13 +28,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             var themeMode by remember { mutableStateOf(ThemeStore.load(this)) }
+            var buttonColor by remember { mutableStateOf(ThemeStore.loadButtonColor(this)) }
             val isDark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
             }
+            val primaryColor = buttonColor.toComposeColor() ?: if (isDark) Color(0xFF66DBB5) else Color(0xFF146C5A)
             val colorScheme = if (isDark) darkColorScheme(
-                primary = Color(0xFF66DBB5),
+                primary = primaryColor,
                 onPrimary = Color(0xFF00382C),
                 primaryContainer = Color(0xFF005141),
                 onPrimaryContainer = Color(0xFF85F8D0),
@@ -43,7 +46,7 @@ class MainActivity : ComponentActivity() {
                 onSurface = Color(0xFFE0E8E2),
                 onSurfaceVariant = Color(0xFFB8C9C0),
             ) else lightColorScheme(
-                primary = Color(0xFF146C5A),
+                primary = primaryColor,
                 onPrimary = Color.White,
                 primaryContainer = Color(0xFFD8F4EA),
                 onPrimaryContainer = Color(0xFF06382E),
@@ -70,13 +73,24 @@ class MainActivity : ComponentActivity() {
                 Surface(color = colorScheme.background) {
                     HomeScreen(
                         themeMode = themeMode,
+                        buttonColor = buttonColor,
                         onThemeModeChange = { mode ->
                             themeMode = mode
                             ThemeStore.save(this, mode)
+                        },
+                        onButtonColorChange = { color ->
+                            buttonColor = normalizeHexColor(color)
+                            ThemeStore.saveButtonColor(this, buttonColor)
                         },
                     )
                 }
             }
         }
     }
+}
+
+private fun String.toComposeColor(): Color? {
+    val normalized = normalizeHexColor(this)
+    if (normalized.isBlank()) return null
+    return Color(android.graphics.Color.parseColor(normalized))
 }

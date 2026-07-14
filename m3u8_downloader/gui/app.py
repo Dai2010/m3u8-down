@@ -29,7 +29,8 @@ def _configure_desktop(app: QApplication) -> None:
         app.setWindowIcon(QIcon(str(icon_path)))
 
     configure_platform_style(app)
-    apply_gui_theme(app, load_config().get("theme", "system"))
+    config = load_config()
+    apply_gui_theme(app, config.get("theme", "system"), config.get("button_color", ""))
 
 
 def _resource_path(name: str) -> Path:

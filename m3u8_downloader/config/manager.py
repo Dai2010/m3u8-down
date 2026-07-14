@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from .theme import normalize_theme
+from .theme import normalize_button_color, normalize_theme
 
 
 DEFAULT_FILTER_KEYWORDS = ["/video/adjump/"]
@@ -25,6 +25,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "enable_resume": True,
     "proxy_port": 8888,
     "theme": "system",
+    "button_color": "",
     "profiles": [],
 }
 
@@ -125,6 +126,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     config["theme"] = normalize_theme(config.get("theme", "system"))
+    config["button_color"] = normalize_button_color(config.get("button_color", ""))
     config["filter_keywords"] = _normalize_keywords(config.get("filter_keywords", []))
     config["profiles"] = [_normalize_profile(profile) for profile in config.get("profiles", [])]
     return config

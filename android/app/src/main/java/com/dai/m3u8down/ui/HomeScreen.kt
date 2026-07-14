@@ -31,8 +31,10 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,7 +58,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -66,15 +70,27 @@ import com.dai2010.m3u8down.config.DEFAULT_FILTER_KEYWORDS_TEXT
 import com.dai2010.m3u8down.config.DownloadProfile
 import com.dai2010.m3u8down.config.ProfileStore
 import com.dai2010.m3u8down.config.ThemeMode
+import com.dai2010.m3u8down.config.normalizeHexColor
 import com.dai2010.m3u8down.download.DownloadManager
 import com.dai2010.m3u8down.network.mediaRequestHeaders
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
 
 data class DownloadItem(val id: Int, val url: String = "", val outputName: String = "")
 
+private val BUTTON_COLOR_PRESETS = listOf("#146C5A", "#2F80ED", "#7C3AED", "#D97706", "#DC2626", "#0F766E")
+
 @Composable
-fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+fun HomeScreen(
+    themeMode: ThemeMode,
+    buttonColor: String,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onButtonColorChange: (String) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var screen by rememberSaveable { mutableStateOf("home") }
@@ -89,6 +105,10 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     var savePathLabel by rememberSaveable { mutableStateOf(currentSavePath(context, "")) }
     var status by rememberSaveable { mutableStateOf("等待操作") }
     var progress by rememberSaveable { mutableStateOf(0f) }
+    var previewUrl by rememberSaveable { mutableStateOf("") }
+    var previewContent by rememberSaveable { mutableStateOf("") }
+    var previewStatus by rememberSaveable { mutableStateOf("等待加载") }
+    var previewReturnScreen by rememberSaveable { mutableStateOf("home") }
     var nextItemId by rememberSaveable { mutableIntStateOf(2) }
     val downloadItems = remember { mutableStateListOf(DownloadItem(1)) }
     var profiles by remember { mutableStateOf(ProfileStore.load(context)) }
@@ -100,6 +120,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
             "stream", "downloadMode", "settings" -> "home"
             "profiles", "about" -> "settings"
             "download" -> "downloadMode"
+            "playlistPreview" -> previewReturnScreen
             else -> "home"
         }
     }
@@ -114,6 +135,31 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
         savePathLabel = if (profile.treeUri.isBlank()) currentSavePath(context, "") else profile.savePathLabel
     }
 
+    fun previewPlaylist(targetUrl: String, returnScreen: String) {
+        val target = targetUrl.trim()
+        if (target.isBlank()) {
+            status = "请先输入 m3u8 URL"
+            return
+        }
+        if (!target.looksLikeM3uUrl()) {
+            status = "预览只支持 .m3u8/.m3u 列表，避免误拉大文件"
+            return
+        }
+        previewUrl = target
+        previewContent = ""
+        previewStatus = "正在加载 m3u8 列表全文"
+        previewReturnScreen = returnScreen
+        screen = "playlistPreview"
+        scope.launch {
+            try {
+                previewContent = fetchPlaylistText(target, mediaRequestHeaders(referer))
+                previewStatus = "已加载 ${previewContent.lines().size} 行"
+            } catch (exc: Exception) {
+                previewStatus = "加载失败：${exc.message ?: exc.javaClass.simpleName}"
+            }
+        }
+    }
+
     val directoryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             context.contentResolver.takePersistableUriPermission(
@@ -126,7 +172,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
     }
 
     when (screen) {
-        "stream" -> StreamScreen(url, { url = it }, referer, { referer = it }, streamAdFilterEnabled, { streamAdFilterEnabled = it }, streamKeywords, { streamKeywords = it }, { screen = "player" }, { goBack() })
+        "stream" -> StreamScreen(url, { url = it }, referer, { referer = it }, streamAdFilterEnabled, { streamAdFilterEnabled = it }, streamKeywords, { streamKeywords = it }, { screen = "player" }, { previewPlaylist(url, "stream") }, { goBack() })
         "downloadMode" -> DownloadModeScreen(
             profiles = profiles,
             selectedIndex = selectedProfileIndex,
@@ -162,6 +208,7 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
             progress = progress,
             onChooseSavePath = { directoryLauncher.launch(null) },
             onBack = { goBack() },
+            onPreview = { item -> previewPlaylist(item.url, "download") },
             onDownload = {
                 scope.launch {
                     val tasks = downloadItems.filter { it.url.isNotBlank() }
@@ -220,12 +267,15 @@ fun HomeScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
         )
         "settings" -> SettingsMenuScreen(
             themeMode = themeMode,
+            buttonColor = buttonColor,
             onThemeModeChange = onThemeModeChange,
+            onButtonColorChange = onButtonColorChange,
             onProfiles = { screen = "profiles" },
             onAbout = { screen = "about" },
             onBack = { goBack() },
         )
         "about" -> AboutScreen(onBack = { goBack() })
+        "playlistPreview" -> PlaylistPreviewScreen(previewUrl, previewContent, previewStatus, { goBack() })
         "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, { goBack() })
         else -> DirectoryScreen(
             onStream = { screen = "stream" },
@@ -249,9 +299,17 @@ private fun DirectoryScreen(onStream: () -> Unit, onDownload: () -> Unit, onSett
 }
 
 @Composable
-private fun SettingsMenuScreen(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit, onProfiles: () -> Unit, onAbout: () -> Unit, onBack: () -> Unit) {
+private fun SettingsMenuScreen(
+    themeMode: ThemeMode,
+    buttonColor: String,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onButtonColorChange: (String) -> Unit,
+    onProfiles: () -> Unit,
+    onAbout: () -> Unit,
+    onBack: () -> Unit,
+) {
     FormScreen("设置", onBack) {
-        ThemeChooser(themeMode, onThemeModeChange)
+        AppearanceChooser(themeMode, buttonColor, onThemeModeChange, onButtonColorChange)
         EntryCard("管理配置", "点击配置即可编辑", Icons.Default.Settings, onProfiles)
         EntryCard("关于", "版本与链接", Icons.Default.Info, onAbout)
     }
@@ -292,23 +350,27 @@ private fun DownloadModeScreen(profiles: List<DownloadProfile>, selectedIndex: I
 }
 
 @Composable
-private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, onPlay: () -> Unit, onBack: () -> Unit) {
+private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, onPlay: () -> Unit, onPreview: () -> Unit, onBack: () -> Unit) {
     FormScreen("流播", onBack) {
         LabeledField("媒体地址") { OutlinedTextField(url, onUrlChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
         if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
-        Button(onClick = onPlay, enabled = url.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("开始播放") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = onPlay, enabled = url.isNotBlank(), modifier = Modifier.weight(1f)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("开始播放") }
+            TextButton(onClick = onPreview, enabled = url.isNotBlank(), modifier = Modifier.weight(1f)) { Text("预览 m3u8 列表") }
+        }
     }
 }
 
 @Composable
-private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
+private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
     FormScreen("下载", onBack) {
         items.forEach { item ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(item.url, { onItemChange(item.copy(url = it)) }, label = { Text("媒体地址") }, singleLine = true, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onPreview(item) }, enabled = item.url.isNotBlank()) { Text("预览") }
                     IconButton(onClick = { onRemoveItem(item) }) { Icon(Icons.Default.Delete, "删除") }
                 }
                 OutlinedTextField(item.outputName, { onItemChange(item.copy(outputName = it)) }, label = { Text("输出文件名") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(start = 28.dp))
@@ -409,16 +471,50 @@ private fun ProfileScreen(
 }
 
 @Composable
-private fun ThemeChooser(themeMode: ThemeMode, onThemeModeChange: (ThemeMode) -> Unit) {
+private fun AppearanceChooser(
+    themeMode: ThemeMode,
+    buttonColor: String,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onButtonColorChange: (String) -> Unit,
+) {
+    var colorText by rememberSaveable(buttonColor) { mutableStateOf(buttonColor) }
     ElevatedCard(colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("深色模式", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("默认跟随系统，也可以手动指定。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ThemeMode.values().forEach { mode ->
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    RadioButton(selected = themeMode == mode, onClick = { onThemeModeChange(mode) })
-                    Text(themeLabel(mode))
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("外观", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("主题和按钮颜色压缩在这里。按钮色可留空使用默认。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                ThemeMode.values().forEach { mode ->
+                    FilterChip(selected = themeMode == mode, onClick = { onThemeModeChange(mode) }, label = { Text(themeLabel(mode)) })
                 }
+            }
+            OutlinedTextField(
+                value = colorText,
+                onValueChange = { colorText = it.take(7) },
+                label = { Text("按钮颜色 #RRGGBB") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                BUTTON_COLOR_PRESETS.forEach { preset ->
+                    Button(
+                        onClick = {
+                            colorText = preset
+                            onButtonColorChange(preset)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = preset.toComposeColor() ?: MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.weight(1f),
+                    ) { Text(" ") }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { onButtonColorChange(colorText) }, modifier = Modifier.weight(1f)) { Text("应用颜色") }
+                TextButton(
+                    onClick = {
+                        colorText = ""
+                        onButtonColorChange("")
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text("恢复默认") }
             }
         }
     }
@@ -439,6 +535,27 @@ private fun AboutScreen(onBack: () -> Unit) {
         LinkButton("个人主页", "https://github.com/Dai2010", context)
         LinkButton("项目主页", "https://github.com/Dai2010/m3u8-down", context)
         Text("协议：GNU General Public License v3.0")
+    }
+}
+
+@Composable
+private fun PlaylistPreviewScreen(url: String, content: String, status: String, onBack: () -> Unit) {
+    FormScreen("m3u8 列表预览", onBack) {
+        Text("完整全文", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(url, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Surface(
+            color = if (MaterialTheme.colorScheme.background == Color(0xFFF7F8F5)) Color(0xFFFBF7EC) else Color(0xFF202820),
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = content.ifBlank { "加载后会显示 m3u8 原文。" },
+                color = if (MaterialTheme.colorScheme.background == Color(0xFFF7F8F5)) Color(0xFF26302B) else Color(0xFFE8EAD8),
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(14.dp),
+            )
+        }
     }
 }
 
@@ -477,6 +594,27 @@ private fun profileLabel(profile: DownloadProfile): String = profile.name + if (
 private fun profileSummary(profile: DownloadProfile): String = "备注：${profile.note.ifBlank { "无" }}\n过滤：${if (profile.adFilterEnabled) "开启" else "关闭"}；线程：${profile.threads}；目录：${profile.savePathLabel}"
 
 private fun currentSavePath(context: Context, treeUri: String): String = if (treeUri.isBlank()) context.getExternalFilesDir(null)?.absolutePath.orEmpty() else Uri.parse(treeUri).lastPathSegment ?: treeUri
+
+private fun String.looksLikeM3uUrl(): Boolean {
+    val path = runCatching { Uri.parse(this).path.orEmpty() }.getOrDefault("").lowercase()
+    return path.endsWith(".m3u8") || path.endsWith(".m3u")
+}
+
+private suspend fun fetchPlaylistText(url: String, headers: Map<String, String>): String = withContext(Dispatchers.IO) {
+    val request = Request.Builder().url(url).apply {
+        headers.forEach { (key, value) -> if (value.isNotBlank()) addHeader(key, value) }
+    }.build()
+    OkHttpClient().newCall(request).execute().use { response ->
+        if (!response.isSuccessful) error("HTTP ${response.code}")
+        response.body?.string().orEmpty()
+    }
+}
+
+private fun String.toComposeColor(): Color? {
+    val normalized = normalizeHexColor(this)
+    if (normalized.isBlank()) return null
+    return runCatching { Color(android.graphics.Color.parseColor(normalized)) }.getOrNull()
+}
 
 private fun outputNameFor(url: String, index: Int): String {
     val rawExtension = Uri.parse(url).lastPathSegment

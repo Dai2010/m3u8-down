@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+import requests
 from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -21,6 +23,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QProgressBar,
+    QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QSpinBox,
@@ -166,6 +169,48 @@ class ProxyWorker(QThread):
                 await self.server.stop()
 
 
+class PlaylistPreviewWorker(QThread):
+    loaded = pyqtSignal(str, str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, url: str, headers: dict[str, str], parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.headers = headers
+
+    def run(self) -> None:
+        try:
+            response = requests.get(self.url, headers=self.headers, timeout=30)
+            response.raise_for_status()
+            self.loaded.emit(self.url, response.text)
+        except Exception as exc:  # noqa: BLE001 - show concise GUI error.
+            self.failed.emit(str(exc))
+
+
+class PlaylistPreviewDialog(QDialog):
+    def __init__(self, url: str, content: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("m3u8 列表预览")
+        self.resize(820, 600)
+        layout = QVBoxLayout(self)
+        title = QLabel("m3u8 列表全文")
+        title.setObjectName("title")
+        source = QLabel(url)
+        source.setObjectName("subtitle")
+        source.setWordWrap(True)
+        reader = QPlainTextEdit(content)
+        reader.setObjectName("playlistPreview")
+        reader.setReadOnly(True)
+        reader.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        reader.setFont(QFont("monospace", 10))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(title)
+        layout.addWidget(source)
+        layout.addWidget(reader, 1)
+        layout.addWidget(buttons)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -176,6 +221,7 @@ class MainWindow(QMainWindow):
         self.active_profile = self.profiles[0]
         self.worker: DownloadWorker | None = None
         self.proxy_worker: ProxyWorker | None = None
+        self.preview_worker: PlaylistPreviewWorker | None = None
         self.download_rows: list[tuple[QLineEdit, QLineEdit, QWidget]] = []
 
         self.stack = QStackedWidget()
@@ -238,6 +284,27 @@ class MainWindow(QMainWindow):
         self.proxy_worker.finished.connect(self._proxy_finished)
         self.proxy_worker.start()
 
+    def _preview_playlist(self, url: str, referer: str) -> None:
+        url = url.strip()
+        if not url:
+            QMessageBox.warning(self, "Missing URL", "Enter an m3u8 URL before previewing.")
+            return
+        if not _looks_like_m3u_url(url):
+            QMessageBox.warning(self, "Not an m3u8 URL", "Preview only loads URLs ending with .m3u8 or .m3u to avoid fetching large media files.")
+            return
+        if self.preview_worker and self.preview_worker.isRunning():
+            QMessageBox.information(self, "Preview running", "m3u8 preview is already loading.")
+            return
+        headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
+        if referer.strip():
+            headers["Referer"] = referer.strip()
+        self._append_stream_log("Loading m3u8 preview")
+        self.preview_worker = PlaylistPreviewWorker(url, headers, self)
+        self.preview_worker.loaded.connect(self._playlist_preview_loaded)
+        self.preview_worker.failed.connect(self._playlist_preview_failed)
+        self.preview_worker.finished.connect(lambda: setattr(self, "preview_worker", None))
+        self.preview_worker.start()
+
     def _stop_proxy(self) -> None:
         if self.proxy_worker:
             self.proxy_worker.stop()
@@ -263,6 +330,12 @@ class MainWindow(QMainWindow):
         self.proxy_button.setEnabled(True)
         self.stop_proxy_button.setEnabled(False)
 
+    def _playlist_preview_loaded(self, url: str, content: str) -> None:
+        PlaylistPreviewDialog(url, content, self).exec()
+
+    def _playlist_preview_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "Preview failed", message)
+
     def _update_progress(self, done: int, total: int) -> None:
         value = int(done / total * 100) if total else 100
         self.progress.setValue(value)
@@ -287,7 +360,7 @@ class MainWindow(QMainWindow):
             self.active_profile = self.profiles[0]
             app = QApplication.instance()
             if app is not None:
-                apply_gui_theme(app, self.config.get("theme", "system"))
+                apply_gui_theme(app, self.config.get("theme", "system"), self.config.get("button_color", ""))
             referer = self.config.get("headers", {}).get("Referer", "")
             self.stream_referer.setText(referer)
             self.download_referer.setText(referer)
@@ -316,9 +389,12 @@ class MainWindow(QMainWindow):
         url_row = QHBoxLayout()
         url_edit = QLineEdit(url)
         url_edit.setPlaceholderText("https://example.com/video/index.m3u8 or video.mp4")
+        preview = QPushButton("预览 m3u8")
+        preview.setObjectName("secondary")
         remove = QPushButton("删除")
         remove.setObjectName("secondary")
         url_row.addWidget(url_edit)
+        url_row.addWidget(preview)
         url_row.addWidget(remove)
         output_edit = QLineEdit(output_name)
         output_edit.setPlaceholderText("留空则按 URL 自动命名")
@@ -327,6 +403,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(output_edit)
         self.download_rows_layout.addWidget(row_widget)
         self.download_rows.append((url_edit, output_edit, row_widget))
+        preview.clicked.connect(lambda: self._preview_playlist(url_edit.text(), self.download_referer.text()))
         remove.clicked.connect(lambda: self._remove_download_row(row_widget))
 
     def _remove_download_row(self, row_widget: QWidget) -> None:
@@ -357,6 +434,8 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
         self.settings_button.setEnabled(not running)
+        if hasattr(self, "preview_button"):
+            self.preview_button.setEnabled(not running)
 
     def _append_log(self, message: str) -> None:
         self.log.append(message)
@@ -417,12 +496,16 @@ class MainWindow(QMainWindow):
 
         self.proxy_button = QPushButton("开始流播")
         self.proxy_button.clicked.connect(self._start_proxy)
+        self.preview_button = QPushButton("预览 m3u8 列表")
+        self.preview_button.setObjectName("secondary")
+        self.preview_button.clicked.connect(lambda: self._preview_playlist(self.stream_url.text(), self.stream_referer.text()))
         self.stop_proxy_button = QPushButton("停止流播")
         self.stop_proxy_button.setObjectName("secondary")
         self.stop_proxy_button.setEnabled(False)
         self.stop_proxy_button.clicked.connect(self._stop_proxy)
         controls = QHBoxLayout()
         controls.addWidget(self.proxy_button)
+        controls.addWidget(self.preview_button)
         controls.addWidget(self.stop_proxy_button)
         controls.addStretch(1)
         layout.addLayout(controls)
@@ -592,3 +675,7 @@ def _output_name_for_url(url: str, index: int, current: str) -> str:
         extension = "mp4"
     stem = "video" if current == "video.mp4" else f"video-{index:03d}"
     return f"{stem}.{extension}"
+
+
+def _looks_like_m3u_url(url: str) -> bool:
+    return Path(urlparse(url).path).suffix.lower() in {".m3u8", ".m3u"}

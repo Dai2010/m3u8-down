@@ -13,8 +13,9 @@
 - 多线程下载 TS 分片，支持 `.part` 临时文件和已完成分片跳过。
 - 调用 FFmpeg 将分片合并为 MP4。
 - 提供本地 m3u8 流播代理，可动态过滤广告片段后转发给 mpv、VLC 等播放器。
+- GUI 和 Android 端支持点击后预览 m3u8 列表完整全文，输入阶段不会自动拉取列表。
 - 桌面端支持 CLI、GUI、TUI 三种使用方式。
-- GUI、TUI 和 Android 端支持深色模式，默认跟随系统主题。
+- GUI、TUI 和 Android 端支持深色模式，默认跟随系统主题；GUI 和 Android 可自定义主按钮颜色。
 - GUI、TUI 和 Android 端支持配置文件管理，可新建、修改和删除过滤、线程、保存目录、标签和备注。
 - Android 端以“流播”“下载”和“设置”作为入口，支持在线播放、下载和统一设置管理。
 - 去广告过滤是可选功能，关闭时不会显示过滤关键词输入。
@@ -95,14 +96,14 @@ Android APK 面向不依赖 GMS 的侧载安装场景，当前优先发布 `arm6
 - Target SDK: 35
 - 架构：`arm64-v8a`
 
-应用打开后分为“流播”“下载”和“设置”三个入口。设置页统一管理配置、主题和关于信息；配置管理会列出所有已有配置，点击配置即可编辑，右下角可新建配置。
+应用打开后分为“流播”“下载”和“设置”三个入口。设置页统一管理配置、外观和关于信息；配置管理会列出所有已有配置，点击配置即可编辑，右下角可新建配置。
 
 ## Windows 端
 
 Windows 版本由 GitHub Actions Release workflow 在 `windows-latest` 上构建，产物包括：
 
-- `m3u8-downloader-4.1.0-windows-x64.exe`
-- `m3u8-downloader-4.1.0-windows-x64.msi`
+- `m3u8-downloader-4.2.0-windows-x64.exe`
+- `m3u8-downloader-4.2.0-windows-x64.msi`
 
 Windows `.exe` 安装器和 `.msi` 都会安装 GUI、CLI 和 TUI 三个入口，并把安装目录加入 PATH，PowerShell 中可直接运行：
 
@@ -143,10 +144,10 @@ ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8
 Linux deb 构建示例：
 
 ```bash
-packaging/linux/build_deb.sh 4.1.0
+packaging/linux/build_deb.sh 4.2.0
 ```
 
-发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.1.0`。
+发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.0`。
 
 ## 发布产物
 
@@ -155,6 +156,6 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 当前发布资产包括：
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
-- `m3u8-downloader_4.1.0_amd64.deb`
-- `m3u8-downloader-4.1.0-windows-x64.exe`
-- `m3u8-downloader-4.1.0-windows-x64.msi`
+- `m3u8-downloader_4.2.0_amd64.deb`
+- `m3u8-downloader-4.2.0-windows-x64.exe`
+- `m3u8-downloader-4.2.0-windows-x64.msi`

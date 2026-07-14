@@ -1,5 +1,5 @@
 from m3u8_downloader.config.manager import delete_profile, load_config, save_config, upsert_profile
-from m3u8_downloader.config.theme import normalize_theme, should_use_dark_theme
+from m3u8_downloader.config.theme import normalize_button_color, normalize_theme, should_use_dark_theme
 
 
 def test_load_config_merges_defaults(tmp_path):
@@ -38,3 +38,14 @@ def test_theme_preference_normalization(monkeypatch):
     assert normalize_theme("bad") == "system"
     assert should_use_dark_theme("dark") is True
     assert should_use_dark_theme("light") is False
+
+
+def test_button_color_normalization(tmp_path):
+    path = tmp_path / "config.json"
+    save_config({"button_color": "146c5a"}, path)
+
+    config = load_config(path)
+
+    assert normalize_button_color("#bad") == ""
+    assert normalize_button_color("146c5a") == "#146C5A"
+    assert config["button_color"] == "#146C5A"

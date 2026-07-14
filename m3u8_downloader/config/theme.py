@@ -9,11 +9,22 @@ from pathlib import Path
 
 
 THEME_OPTIONS = ("system", "light", "dark")
+DEFAULT_BUTTON_COLOR = ""
 
 
 def normalize_theme(value: object) -> str:
     theme = str(value or "system").strip().lower()
     return theme if theme in THEME_OPTIONS else "system"
+
+
+def normalize_button_color(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return DEFAULT_BUTTON_COLOR
+    color = raw[1:] if raw.startswith("#") else raw
+    if len(color) != 6 or any(char not in "0123456789abcdefABCDEF" for char in color):
+        return DEFAULT_BUTTON_COLOR
+    return f"#{color.upper()}"
 
 
 def should_use_dark_theme(preference: object = "system", *, default: bool = False) -> bool:

@@ -16,6 +16,13 @@ enum class ThemeMode(val value: String) {
     }
 }
 
+fun normalizeHexColor(value: String?): String {
+    val raw = value.orEmpty().trim()
+    if (raw.isBlank()) return ""
+    val color = raw.removePrefix("#")
+    return if (color.length == 6 && color.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) "#${color.uppercase()}" else ""
+}
+
 data class DownloadProfile(
     val name: String = "默认配置",
     val tags: List<String> = emptyList(),
@@ -75,13 +82,23 @@ object ProfileStore {
 object ThemeStore {
     private const val PREFS = "appearance"
     private const val KEY_THEME = "theme"
+    private const val KEY_BUTTON_COLOR = "buttonColor"
 
     fun load(context: Context): ThemeMode {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_THEME, ThemeMode.SYSTEM.value)
         return ThemeMode.from(raw)
     }
 
+    fun loadButtonColor(context: Context): String {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_BUTTON_COLOR, "")
+        return normalizeHexColor(raw)
+    }
+
     fun save(context: Context, mode: ThemeMode) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_THEME, mode.value).apply()
+    }
+
+    fun saveButtonColor(context: Context, color: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_BUTTON_COLOR, normalizeHexColor(color)).apply()
     }
 }

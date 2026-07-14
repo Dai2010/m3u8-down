@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QStyleFactory
 
-from ..config.theme import normalize_theme, should_use_dark_theme
+from ..config.theme import normalize_button_color, normalize_theme, should_use_dark_theme
 from .resources import stylesheet
 
 
@@ -28,13 +28,14 @@ def configure_platform_style(app: QApplication) -> None:
         QIcon.setThemeName("breeze")
 
 
-def apply_gui_theme(app: QApplication, preference: object = "system") -> None:
+def apply_gui_theme(app: QApplication, preference: object = "system", button_color: object = "") -> None:
     theme = normalize_theme(preference)
+    custom_button_color = normalize_button_color(button_color)
     is_dark = _qt_prefers_dark(app) if theme == "system" else None
     if is_dark is None:
         is_dark = should_use_dark_theme(theme)
     app.setPalette(_palette(is_dark))
-    app.setStyleSheet(stylesheet(is_dark))
+    app.setStyleSheet(stylesheet(is_dark, custom_button_color))
 
 
 def _qt_prefers_dark(app: QApplication) -> bool | None:
