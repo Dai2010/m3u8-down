@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="${1:-4.2.0}"
+VERSION="${1:-4.2.1}"
 DEB_ROOT="$ROOT/build/deb-root"
 OUT_DIR="$ROOT/build/release"
 
