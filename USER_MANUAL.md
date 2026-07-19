@@ -1,6 +1,6 @@
 # m3u8-downloader 使用手册
 
-版本：`4.2.2`
+版本：`4.2.3`
 
 本工具用于下载、合并和流播 HLS/m3u8、DASH/mpd、Smooth Streaming、RTSP 以及常见直链媒体。B 站兼容模式只负责请求已经拿到的媒体地址，不负责解析 BV 页面、调用 B 站接口或选择音视频流。
 
@@ -92,8 +92,9 @@ https://api.bilibili.com/x/player/wbi/playurl?...
 - 默认补充 `User-Agent: Mozilla/5.0`。
 - 默认补充 `Referer: https://www.bilibili.com`。
 - 保留配置中的 `Cookie` 等请求头。
-- 对 B 站 CDN 的 HTTPS 地址执行 HTTP 兼容替换。
-- 对带端口的 `.mcdn.bilivideo.cn:<port>` 地址保留 HTTPS。
+- 桌面 CLI/TUI 在需要时可对 B 站 CDN 执行 HTTP 兼容替换。
+- Android 始终保留 CDN 的 HTTPS；这是 Android 网络安全策略要求，不能使用明文 HTTP。
+- 带端口的 `.mcdn.bilivideo.cn:<port>` 地址在所有平台保留 HTTPS。
 - 下载失败日志只显示不带查询参数的 URL，避免把签名完整写入错误信息。
 
 ### 手动模式
@@ -109,6 +110,8 @@ https://api.bilibili.com/x/player/wbi/playurl?...
 - 地址已经被代理改写，主机名不再是 B 站域名。
 - CDN 使用了隐藏或非标准域名，但你确认它是 B 站媒体地址。
 - 自动探测失败，需要强制使用 B 站请求头。
+
+Android 页面中的开关显示实际生效状态：当前输入或下载列表包含标准 B 站地址时，即使没有手动点击，开关也会显示为开启；普通地址则只显示手动设置的状态。
 
 手动模式不会把任意第三方地址强行变成 B 站媒体，也不会把 BV 页面解析成媒体地址。
 

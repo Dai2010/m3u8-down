@@ -76,6 +76,7 @@ import com.dai2010.m3u8down.download.DownloadManager
 import com.dai2010.m3u8down.media.MediaInfo
 import com.dai2010.m3u8down.media.MediaKind
 import com.dai2010.m3u8down.media.MediaTypeDetector
+import com.dai2010.m3u8down.network.isBilibiliUrl
 import com.dai2010.m3u8down.network.mediaRequestHeaders
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
 import kotlinx.coroutines.Dispatchers
@@ -136,6 +137,8 @@ fun HomeScreen(
     var streamMediaInfo by remember { mutableStateOf<MediaInfo?>(null) }
     var streamDetectedUrl by remember { mutableStateOf("") }
     var streamDetectionStatus by remember { mutableStateOf("输入链接后等待 5 秒自动探测") }
+    val streamBilibiliCompatActive = streamBilibiliCompatEnabled || isBilibiliUrl(url)
+    val downloadBilibiliCompatActive = downloadBilibiliCompatEnabled || downloadItems.any { isBilibiliUrl(it.url) }
 
     LaunchedEffect(url, referer, streamBilibiliCompatEnabled) {
         streamMediaInfo = null
@@ -148,7 +151,7 @@ fun HomeScreen(
         delay(5000)
         streamDetectionStatus = "正在探测媒体类型"
         val info = withContext(Dispatchers.IO) {
-            MediaTypeDetector.detect(url, mediaRequestHeaders(referer, url, streamBilibiliCompatEnabled), bilibiliCompatEnabled = streamBilibiliCompatEnabled)
+            MediaTypeDetector.detect(url, mediaRequestHeaders(referer, url, streamBilibiliCompatActive), bilibiliCompatEnabled = streamBilibiliCompatActive)
         }
         streamMediaInfo = info
         streamDetectedUrl = url
@@ -161,7 +164,8 @@ fun HomeScreen(
         downloadItems.filter { it.url.isNotBlank() && it.detectedUrl != it.url }.forEach { item ->
             updateDownloadItem(downloadItems, item.id) { it.copy(detectionStatus = "正在探测媒体类型") }
             val info = withContext(Dispatchers.IO) {
-                MediaTypeDetector.detect(item.url, mediaRequestHeaders(referer, item.url, downloadBilibiliCompatEnabled), bilibiliCompatEnabled = downloadBilibiliCompatEnabled)
+                val bilibiliCompatActive = downloadBilibiliCompatEnabled || isBilibiliUrl(item.url)
+                MediaTypeDetector.detect(item.url, mediaRequestHeaders(referer, item.url, bilibiliCompatActive), bilibiliCompatEnabled = bilibiliCompatActive)
             }
             updateDownloadItem(downloadItems, item.id) {
                 it.copy(
@@ -213,7 +217,11 @@ fun HomeScreen(
         previewStatus = "正在加载 m3u8 列表全文"
         previewReturnScreen = returnScreen
         screen = "playlistPreview"
-        val bilibiliCompat = if (returnScreen == "stream") streamBilibiliCompatEnabled else downloadBilibiliCompatEnabled
+        val bilibiliCompat = if (returnScreen == "stream") {
+            streamBilibiliCompatEnabled || isBilibiliUrl(target)
+        } else {
+            downloadBilibiliCompatEnabled || isBilibiliUrl(target)
+        }
         scope.launch {
             try {
                 previewContent = fetchPlaylistText(
@@ -246,7 +254,7 @@ fun HomeScreen(
             { referer = it },
             streamAdFilterEnabled,
             { streamAdFilterEnabled = it },
-            streamBilibiliCompatEnabled,
+            streamBilibiliCompatActive,
             { streamBilibiliCompatEnabled = it },
             streamKeywords,
             { streamKeywords = it },
@@ -290,7 +298,7 @@ fun HomeScreen(
             onRefererChange = { referer = it },
             adFilterEnabled = downloadAdFilterEnabled,
             onAdFilterEnabledChange = { downloadAdFilterEnabled = it },
-            bilibiliCompatEnabled = downloadBilibiliCompatEnabled,
+            bilibiliCompatEnabled = downloadBilibiliCompatActive,
             onBilibiliCompatEnabledChange = { downloadBilibiliCompatEnabled = it },
             keywords = downloadKeywords,
             onKeywordsChange = { downloadKeywords = it },
@@ -330,7 +338,8 @@ fun HomeScreen(
                                 val taskCache = File(batchCache, "url-${index + 1}")
                                 taskCache.deleteRecursively()
                                 finalOutput.parentFile?.mkdirs()
-                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads, item.mediaInfo, downloadBilibiliCompatEnabled).collect { update ->
+                                val bilibiliCompatActive = downloadBilibiliCompatEnabled || isBilibiliUrl(item.url)
+                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads, item.mediaInfo, bilibiliCompatActive).collect { update ->
                                     status = "${index + 1}/${tasks.size} ${update.message}"
                                     progress = if (update.total == 0) 0f else update.done.toFloat() / update.total.toFloat()
                                 }
@@ -377,7 +386,7 @@ fun HomeScreen(
         )
         "about" -> AboutScreen(onBack = { goBack() })
         "playlistPreview" -> PlaylistPreviewScreen(previewUrl, previewContent, previewStatus, { goBack() })
-        "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, streamMediaInfo, streamBilibiliCompatEnabled, { goBack() })
+        "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, streamMediaInfo, streamBilibiliCompatActive, { goBack() })
         else -> DirectoryScreen(
             onStream = { screen = "stream" },
             onDownload = { screen = "downloadMode" },

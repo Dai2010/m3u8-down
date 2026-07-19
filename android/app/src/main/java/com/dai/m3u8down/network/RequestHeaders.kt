@@ -15,8 +15,7 @@ fun prepareBilibiliUrl(url: String, enabled: Boolean = false): String {
     val parsed = Uri.parse(url)
     val host = parsed.host.orEmpty().lowercase().trimEnd('.')
     if (!isBilivideoHost(host)) return url
-    if (host.endsWith(".mcdn.bilivideo.cn") && parsed.port != -1) return url
-    return if (parsed.scheme.equals("https", ignoreCase = true)) url.replaceFirst(Regex("^https://", RegexOption.IGNORE_CASE), "http://") else url
+    return url
 }
 
 fun prepareBilibiliHeaders(url: String, headers: Map<String, String> = emptyMap(), enabled: Boolean = false): Map<String, String> {
