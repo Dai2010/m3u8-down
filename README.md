@@ -153,7 +153,7 @@ packaging/linux/build_deb.sh 4.2.2
 
 所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64 和 Windows x64；发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.2`。
 
-Android 发布前必须配置以下 GitHub Actions secrets：`M3U8_ANDROID_KEYSTORE_BASE64`、`M3U8_ANDROID_STORE_PASSWORD`、`M3U8_ANDROID_KEY_ALIAS` 和 `M3U8_ANDROID_KEY_PASSWORD`。工作流会使用原升级签名私钥签名，并校验旧版证书指纹；缺少私钥或指纹不一致时直接失败，不上传不可升级的 APK。
+Android 发布前必须配置以下 GitHub Actions secrets：`M3U8_ANDROID_KEYSTORE_BASE64`、`M3U8_ANDROID_STORE_PASSWORD`、`M3U8_ANDROID_KEY_ALIAS` 和 `M3U8_ANDROID_KEY_PASSWORD`。工作流会使用持久保存的 PKCS#12 发布密钥签名并校验证书指纹；缺少私钥或指纹不一致时直接失败，不上传不可升级的 APK。更换发布密钥后，旧证书签名的 APK 不能直接覆盖安装。
 
 ## 发布产物
 

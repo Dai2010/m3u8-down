@@ -64,12 +64,17 @@ jobs:
           signing_dir="$GITHUB_WORKSPACE/.ci-signing"
           mkdir -p "$signing_dir"
           trap 'rm -rf "$signing_dir"' EXIT
-          printf '%s' "$M3U8_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/m3u8-down-release.keystore"
+          printf '%s' "$M3U8_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/m3u8-down-release.p12"
+          keytool -list \
+            -storetype PKCS12 \
+            -keystore "$signing_dir/m3u8-down-release.p12" \
+            -storepass "$M3U8_ANDROID_STORE_PASSWORD" \
+            -alias "$M3U8_ANDROID_KEY_ALIAS" > /dev/null
           apk="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$apksigner"
           "$apksigner" sign \
-            --ks "$signing_dir/m3u8-down-release.keystore" \
+            --ks "$signing_dir/m3u8-down-release.p12" \
             --ks-pass "env:M3U8_ANDROID_STORE_PASSWORD" \
             --ks-key-alias "$M3U8_ANDROID_KEY_ALIAS" \
             --key-pass "env:M3U8_ANDROID_KEY_PASSWORD" \
@@ -78,7 +83,7 @@ jobs:
           mv "$signing_dir/signed.apk" "$apk"
           "$apksigner" verify --print-certs "$apk" > "$signing_dir/certificates.txt"
           actual_fingerprint="$(sed -n 's/.*certificate SHA-256 digest: //p' "$signing_dir/certificates.txt" | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
-          expected_fingerprint="fa4546904d1c4b9de5737418bda9cf177198f850ebfcab3b95480e0bdfbe9201"
+          expected_fingerprint="58788193423223d24bce044d1291d107a7cafd4a14186c78c6d885bd626b6f30"
           test "$actual_fingerprint" = "$expected_fingerprint"
       - name: Build deb
         run: |
