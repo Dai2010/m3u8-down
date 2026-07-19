@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from .bilibili import prepare_bilibili_request
+
 
 class MediaKind(str, Enum):
     HLS = "hls"
@@ -36,6 +38,7 @@ class MediaInfo:
 
 PROGRESSIVE_EXTENSIONS = {
     ".mp4",
+    ".m4s",
     ".m4v",
     ".mov",
     ".mkv",
@@ -53,16 +56,21 @@ PROGRESSIVE_EXTENSIONS = {
 }
 
 
-def detect_media_type(url: str, headers: dict[str, str] | None = None, timeout: int = 10) -> MediaInfo:
+def detect_media_type(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout: int = 10,
+    bilibili_compat: bool = False,
+) -> MediaInfo:
     info = detect_media_type_from_url(url)
     if info.kind != MediaKind.UNKNOWN:
         return info
 
-    request_headers = {key: value for key, value in (headers or {}).items() if value}
-    info = _detect_with_head(url, request_headers, timeout)
+    request_url, request_headers = prepare_bilibili_request(url, headers, bilibili_compat)
+    info = _detect_with_head(request_url, request_headers, timeout)
     if info.kind != MediaKind.UNKNOWN:
         return info
-    return _detect_with_preview_get(url, request_headers, timeout)
+    return _detect_with_preview_get(request_url, request_headers, timeout)
 
 
 def detect_media_type_from_url(url: str) -> MediaInfo:
@@ -89,7 +97,7 @@ def detect_media_type_from_content_type(content_type: str) -> MediaInfo:
         return MediaInfo(MediaKind.DASH, "content-type", content_type)
     if normalized == "application/vnd.ms-sstr+xml":
         return MediaInfo(MediaKind.SMOOTH, "content-type", content_type)
-    if normalized.startswith(("video/", "audio/")):
+    if normalized in {"application/mp4", "application/fmp4"} or normalized.startswith(("video/", "audio/")):
         return MediaInfo(MediaKind.PROGRESSIVE, "content-type", content_type)
     return MediaInfo(MediaKind.UNKNOWN, "content-type", content_type)
 
@@ -103,6 +111,27 @@ def detect_media_type_from_body(body: str) -> MediaInfo:
     if preview.startswith("<SmoothStreamingMedia") or "<SmoothStreamingMedia" in preview[:256]:
         return MediaInfo(MediaKind.SMOOTH, "body")
     return MediaInfo(MediaKind.UNKNOWN, "body")
+
+
+def detect_media_type_from_bytes(body: bytes, content_type: str = "") -> MediaInfo:
+    text_info = detect_media_type_from_body(body.decode("utf-8", errors="ignore"))
+    if text_info.kind != MediaKind.UNKNOWN:
+        return text_info
+    if _looks_like_progressive_bytes(body):
+        return MediaInfo(MediaKind.PROGRESSIVE, "body", content_type)
+    return MediaInfo(MediaKind.UNKNOWN, "body", content_type)
+
+
+def _looks_like_progressive_bytes(body: bytes) -> bool:
+    if len(body) >= 8 and body[4:8] == b"ftyp":
+        return True
+    if body.startswith((b"\x1a\x45\xdf\xa3", b"OggS", b"RIFF", b"ID3")):
+        return True
+    if len(body) >= 2 and body[0] == 0xFF and body[1] & 0xE0 == 0xE0:
+        return True
+    if len(body) >= 2 and body[0] == 0xFF and body[1] & 0xF6 == 0xF0:
+        return True
+    return any(offset < len(body) and body[offset] == 0x47 for offset in (0, 188, 376))
 
 
 def _detect_with_head(url: str, headers: dict[str, str], timeout: int) -> MediaInfo:
@@ -127,4 +156,4 @@ def _detect_with_preview_get(url: str, headers: dict[str, str], timeout: int) ->
         return MediaInfo(MediaKind.UNKNOWN)
     except StopIteration:
         chunk = b""
-    return detect_media_type_from_body(chunk.decode("utf-8", errors="ignore"))
+    return detect_media_type_from_bytes(chunk, response.headers.get("Content-Type", ""))

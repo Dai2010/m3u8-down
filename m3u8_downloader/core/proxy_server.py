@@ -6,6 +6,7 @@ from urllib.parse import quote, unquote
 
 from aiohttp import ClientSession, web
 
+from .bilibili import prepare_bilibili_request
 from .filter import is_ad_segment
 from .parser import Segment, parse_playlist, resolve_url
 
@@ -18,12 +19,14 @@ class ProxyServer:
         headers: dict[str, str] | None = None,
         filter_keywords: list[str] | None = None,
         use_regex: bool = False,
+        bilibili_compat: bool = False,
     ):
         self.host = host
         self.port = port
         self.headers = headers or {}
         self.filter_keywords = filter_keywords or []
         self.use_regex = use_regex
+        self.bilibili_compat = bilibili_compat
         self._app: web.Application | None = None
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -65,15 +68,16 @@ class ProxyServer:
             raise web.HTTPBadRequest(text="missing src")
         source = unquote(source)
         session = self._require_session()
-        async with session.get(source) as response:
+        request_url, request_headers = prepare_bilibili_request(source, self.headers, self.bilibili_compat)
+        async with session.get(request_url, headers=request_headers) as response:
             response.raise_for_status()
             content = await response.text()
 
-        playlist = parse_playlist(content, source)
+        playlist = parse_playlist(content, request_url)
         if playlist.is_master:
-            text = self._proxy_master_playlist(content, source)
+            text = self._proxy_master_playlist(content, request_url)
         else:
-            text = self._proxy_media_playlist(content, source, playlist.segments)
+            text = self._proxy_media_playlist(content, request_url, playlist.segments)
         return web.Response(text=text, content_type="application/vnd.apple.mpegurl")
 
     async def _handle_ts(self, request: web.Request) -> web.StreamResponse:
@@ -85,7 +89,8 @@ class ProxyServer:
             return web.Response(status=204)
 
         session = self._require_session()
-        async with session.get(source) as upstream:
+        request_url, request_headers = prepare_bilibili_request(source, self.headers, self.bilibili_compat)
+        async with session.get(request_url, headers=request_headers) as upstream:
             upstream.raise_for_status()
             response = web.StreamResponse(status=upstream.status, headers={"Content-Type": upstream.headers.get("Content-Type", "video/MP2T")})
             await response.prepare(request)

@@ -15,7 +15,7 @@ from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
 from ..core.filter import filter_playlist
-from ..core.media_type import MediaKind, detect_media_type
+from ..core.media_type import MediaInfo, MediaKind, detect_media_type
 from ..core.merger import merge_to_mp4
 from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
@@ -38,6 +38,9 @@ class M3U8DownloaderTUI(App):
         self.profiles = load_profiles(self.config)
         self.active_profile_index = 0
         self.proxy: ProxyServer | None = None
+        self.detection_task: asyncio.Task | None = None
+        self.detected_url = ""
+        self.detected_media_info: MediaInfo | None = None
 
     def compose(self) -> ComposeResult:
         profile = self.profiles[self.active_profile_index]
@@ -88,6 +91,35 @@ class M3U8DownloaderTUI(App):
         elif event.button.id == "delete-profile":
             self._delete_profile()
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "url":
+            return
+        if self.detection_task and not self.detection_task.done():
+            self.detection_task.cancel()
+        self.detected_url = ""
+        self.detected_media_info = None
+        url = event.value.strip()
+        if not url:
+            self.query_one("#status", Static).update("输入链接后等待 5 秒自动探测")
+            return
+        self.query_one("#status", Static).update("将在 5 秒后探测媒体类型")
+        self.detection_task = asyncio.create_task(self._detect_after_delay(url))
+
+    async def _detect_after_delay(self, url: str) -> None:
+        try:
+            await asyncio.sleep(5)
+            self.query_one("#status", Static).update("正在探测媒体类型")
+            media_info = await asyncio.to_thread(detect_media_type, url, self._headers())
+            if self.query_one("#url", Input).value.strip() != url:
+                return
+            self.detected_url = url
+            self.detected_media_info = media_info
+            self.query_one("#status", Static).update(f"已识别：{media_info.display_name}")
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001 - TUI displays concise detection failures.
+            self.query_one("#status", Static).update(f"探测失败：{exc}")
+
     async def _download(self) -> None:
         url = self.query_one("#url", Input).value.strip()
         if not url:
@@ -99,8 +131,10 @@ class M3U8DownloaderTUI(App):
         work_dir: Path | None = None
         try:
             headers = self._headers()
-            self._write("Detecting media type")
-            media_info = await asyncio.to_thread(detect_media_type, url, headers)
+            if url != self.detected_url or self.detected_media_info is None:
+                self._write("Wait for the 5-second media detection to finish")
+                return
+            media_info = self.detected_media_info
             self._write(f"Detected {media_info.display_name}")
             if media_info.kind == MediaKind.PROGRESSIVE:
                 self._write("Downloading direct media")
@@ -147,8 +181,11 @@ class M3U8DownloaderTUI(App):
         if self.proxy:
             self._write(self.proxy.get_stream_url(url))
             return
+        if url != self.detected_url or self.detected_media_info is None:
+            self._write("Wait for the 5-second media detection to finish")
+            return
         headers = self._headers()
-        media_info = await asyncio.to_thread(detect_media_type, url, headers)
+        media_info = self.detected_media_info
         self._write(f"Detected {media_info.display_name}")
         if media_info.kind != MediaKind.HLS:
             self._write(f"Playback URL: {url}")

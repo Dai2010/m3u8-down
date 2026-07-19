@@ -23,6 +23,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "filter_keywords": DEFAULT_FILTER_KEYWORDS,
     "output_format": "mp4",
     "enable_resume": True,
+    "bilibili_compat": False,
     "proxy_port": 8888,
     "theme": "system",
     "button_color": "",

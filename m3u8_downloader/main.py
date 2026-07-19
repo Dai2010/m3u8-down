@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import requests
 
 from .config.manager import load_config
+from .core.bilibili import is_bilibili_url, prepare_bilibili_request
 from .core.direct_downloader import download_direct_media
 from .core.downloader import Downloader
 from .core.ffmpeg_downloader import download_with_ffmpeg
@@ -46,13 +47,15 @@ def main() -> None:
     threads = args.threads or int(config["threads"])
     output_path = args.output or _default_output_for_url(args.url)
     output = expand_path(output_path)
+    bilibili_compat = bool(config.get("bilibili_compat", False)) or is_bilibili_url(args.url)
+    request_url, request_headers = prepare_bilibili_request(args.url, headers, bilibili_compat)
 
-    media_info = detect_media_type(args.url, headers)
+    media_info = detect_media_type(args.url, headers, bilibili_compat=bilibili_compat)
     print(f"detected {media_info.display_name}")
     if media_info.kind == MediaKind.PROGRESSIVE:
         try:
             print("downloading direct media")
-            download_direct_media(args.url, output, headers)
+            download_direct_media(args.url, output, headers, bilibili_compat=bilibili_compat)
         except Exception as exc:  # noqa: BLE001 - CLI should return a user-readable error.
             raise SystemExit(f"download failed: {exc}") from exc
         print(f"saved {output}")
@@ -64,14 +67,14 @@ def main() -> None:
         try:
             require_ffmpeg()
             print("downloading with ffmpeg")
-            download_with_ffmpeg(args.url, output, headers)
+            download_with_ffmpeg(request_url, output, request_headers, bilibili_compat=bilibili_compat)
         except Exception as exc:  # noqa: BLE001 - CLI should return a user-readable error.
             raise SystemExit(f"download failed: {exc}") from exc
         print(f"saved {output}")
         return
 
     try:
-        playlist = _load_media_playlist(args.url, headers, args.variant)
+        playlist = _load_media_playlist(args.url, headers, args.variant, bilibili_compat=bilibili_compat)
     except Exception as exc:  # noqa: BLE001 - CLI must surface a concise failure.
         raise SystemExit(f"failed to load playlist: {exc}") from exc
 
@@ -87,7 +90,9 @@ def main() -> None:
     try:
         require_ffmpeg()
         print(f"downloading {len(filtered.segments)} segments with {threads} workers")
-        ts_files = Downloader(threads=threads, headers=headers).download(filtered.segments, work_dir, _print_progress)
+        ts_files = Downloader(threads=threads, headers=request_headers, bilibili_compat=bilibili_compat).download(
+            filtered.segments, work_dir, _print_progress
+        )
         print("merging segments")
         merge_to_mp4(ts_files, output)
     except Exception as exc:  # noqa: BLE001 - CLI should return a user-readable error.
@@ -109,10 +114,11 @@ def _launch_tui() -> None:
     tui_main()
 
 
-def _load_media_playlist(url: str, headers: dict[str, str], variant_index: int = -1) -> Playlist:
-    response = requests.get(url, headers=headers, timeout=30)
+def _load_media_playlist(url: str, headers: dict[str, str], variant_index: int = -1, bilibili_compat: bool = False) -> Playlist:
+    request_url, request_headers = prepare_bilibili_request(url, headers, bilibili_compat)
+    response = requests.get(request_url, headers=request_headers, timeout=30)
     response.raise_for_status()
-    playlist = parse_playlist(response.text, url)
+    playlist = parse_playlist(response.text, request_url)
     if not playlist.is_master:
         return playlist
 
@@ -125,9 +131,10 @@ def _load_media_playlist(url: str, headers: dict[str, str], variant_index: int =
         variant = playlist.best_variant()
     if variant is None:
         raise ValueError("master playlist has no variants")
-    response = requests.get(variant.url, headers=headers, timeout=30)
+    variant_url, variant_headers = prepare_bilibili_request(variant.url, headers, bilibili_compat)
+    response = requests.get(variant_url, headers=variant_headers, timeout=30)
     response.raise_for_status()
-    return parse_playlist(response.text, variant.url)
+    return parse_playlist(response.text, variant_url)
 
 
 def _print_progress(done: int, total: int) -> None:

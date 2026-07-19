@@ -48,6 +48,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -72,15 +73,32 @@ import com.dai2010.m3u8down.config.ProfileStore
 import com.dai2010.m3u8down.config.ThemeMode
 import com.dai2010.m3u8down.config.normalizeHexColor
 import com.dai2010.m3u8down.download.DownloadManager
+import com.dai2010.m3u8down.media.MediaInfo
+import com.dai2010.m3u8down.media.MediaKind
+import com.dai2010.m3u8down.media.MediaTypeDetector
 import com.dai2010.m3u8down.network.mediaRequestHeaders
+import com.dai2010.m3u8down.network.prepareBilibiliUrl
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 
-data class DownloadItem(val id: Int, val url: String = "", val outputName: String = "")
+data class DownloadItem(
+    val id: Int,
+    val url: String = "",
+    val outputName: String = "",
+    val detectedUrl: String = "",
+    val mediaInfo: MediaInfo? = null,
+    val detectionStatus: String = "等待输入链接",
+)
+
+private fun updateDownloadItem(items: MutableList<DownloadItem>, id: Int, transform: (DownloadItem) -> DownloadItem) {
+    val index = items.indexOfFirst { it.id == id }
+    if (index >= 0) items[index] = transform(items[index])
+}
 
 private val BUTTON_COLOR_PRESETS = listOf("#146C5A", "#2F80ED", "#7C3AED", "#D97706", "#DC2626", "#0F766E")
 
@@ -97,8 +115,10 @@ fun HomeScreen(
     var url by rememberSaveable { mutableStateOf("") }
     var referer by rememberSaveable { mutableStateOf("") }
     var streamAdFilterEnabled by rememberSaveable { mutableStateOf(false) }
+    var streamBilibiliCompatEnabled by rememberSaveable { mutableStateOf(false) }
     var streamKeywords by rememberSaveable { mutableStateOf(DEFAULT_FILTER_KEYWORDS_TEXT) }
     var downloadAdFilterEnabled by rememberSaveable { mutableStateOf(false) }
+    var downloadBilibiliCompatEnabled by rememberSaveable { mutableStateOf(false) }
     var downloadKeywords by rememberSaveable { mutableStateOf(DEFAULT_FILTER_KEYWORDS_TEXT) }
     var threadText by rememberSaveable { mutableStateOf("8") }
     var downloadTreeUri by rememberSaveable { mutableStateOf("") }
@@ -113,6 +133,45 @@ fun HomeScreen(
     val downloadItems = remember { mutableStateListOf(DownloadItem(1)) }
     var profiles by remember { mutableStateOf(ProfileStore.load(context)) }
     var selectedProfileIndex by rememberSaveable { mutableIntStateOf(0) }
+    var streamMediaInfo by remember { mutableStateOf<MediaInfo?>(null) }
+    var streamDetectedUrl by remember { mutableStateOf("") }
+    var streamDetectionStatus by remember { mutableStateOf("输入链接后等待 5 秒自动探测") }
+
+    LaunchedEffect(url, referer, streamBilibiliCompatEnabled) {
+        streamMediaInfo = null
+        streamDetectedUrl = ""
+        if (url.isBlank()) {
+            streamDetectionStatus = "输入链接后等待 5 秒自动探测"
+            return@LaunchedEffect
+        }
+        streamDetectionStatus = "将在 5 秒后探测媒体类型"
+        delay(5000)
+        streamDetectionStatus = "正在探测媒体类型"
+        val info = withContext(Dispatchers.IO) {
+            MediaTypeDetector.detect(url, mediaRequestHeaders(referer, url, streamBilibiliCompatEnabled), bilibiliCompatEnabled = streamBilibiliCompatEnabled)
+        }
+        streamMediaInfo = info
+        streamDetectedUrl = url
+        streamDetectionStatus = if (info.kind == MediaKind.UNKNOWN) "未能识别媒体类型，请检查链接或请求头" else "已识别：${info.kind.displayName}"
+    }
+
+    val downloadDetectionKey = downloadItems.joinToString("|") { "${it.id}:${it.url}" }
+    LaunchedEffect(downloadDetectionKey, referer, downloadBilibiliCompatEnabled) {
+        delay(5000)
+        downloadItems.filter { it.url.isNotBlank() && it.detectedUrl != it.url }.forEach { item ->
+            updateDownloadItem(downloadItems, item.id) { it.copy(detectionStatus = "正在探测媒体类型") }
+            val info = withContext(Dispatchers.IO) {
+                MediaTypeDetector.detect(item.url, mediaRequestHeaders(referer, item.url, downloadBilibiliCompatEnabled), bilibiliCompatEnabled = downloadBilibiliCompatEnabled)
+            }
+            updateDownloadItem(downloadItems, item.id) {
+                it.copy(
+                    mediaInfo = info,
+                    detectedUrl = item.url,
+                    detectionStatus = if (info.kind == MediaKind.UNKNOWN) "未能识别媒体类型" else "已识别：${info.kind.displayName}",
+                )
+            }
+        }
+    }
 
     fun goBack() {
         screen = when (screen) {
@@ -135,14 +194,18 @@ fun HomeScreen(
         savePathLabel = if (profile.treeUri.isBlank()) currentSavePath(context, "") else profile.savePathLabel
     }
 
-    fun previewPlaylist(targetUrl: String, returnScreen: String) {
+    fun previewPlaylist(targetUrl: String, returnScreen: String, detectedInfo: MediaInfo?, detectedUrl: String) {
         val target = targetUrl.trim()
         if (target.isBlank()) {
             status = "请先输入 m3u8 URL"
             return
         }
-        if (!target.looksLikeM3uUrl()) {
-            status = "预览只支持 .m3u8/.m3u 列表，避免误拉大文件"
+        if (target != detectedUrl || detectedInfo == null) {
+            status = "请等待链接输入 5 秒后的媒体探测完成"
+            return
+        }
+        if (detectedInfo.kind != MediaKind.HLS) {
+            status = "当前是${detectedInfo.kind.displayName}，不支持 m3u8 列表预览"
             return
         }
         previewUrl = target
@@ -150,9 +213,13 @@ fun HomeScreen(
         previewStatus = "正在加载 m3u8 列表全文"
         previewReturnScreen = returnScreen
         screen = "playlistPreview"
+        val bilibiliCompat = if (returnScreen == "stream") streamBilibiliCompatEnabled else downloadBilibiliCompatEnabled
         scope.launch {
             try {
-                previewContent = fetchPlaylistText(target, mediaRequestHeaders(referer))
+                previewContent = fetchPlaylistText(
+                    prepareBilibiliUrl(target, bilibiliCompat),
+                    mediaRequestHeaders(referer, target, bilibiliCompat),
+                )
                 previewStatus = "已加载 ${previewContent.lines().size} 行"
             } catch (exc: Exception) {
                 previewStatus = "加载失败：${exc.message ?: exc.javaClass.simpleName}"
@@ -172,7 +239,24 @@ fun HomeScreen(
     }
 
     when (screen) {
-        "stream" -> StreamScreen(url, { url = it }, referer, { referer = it }, streamAdFilterEnabled, { streamAdFilterEnabled = it }, streamKeywords, { streamKeywords = it }, { screen = "player" }, { previewPlaylist(url, "stream") }, { goBack() })
+        "stream" -> StreamScreen(
+            url,
+            { url = it },
+            referer,
+            { referer = it },
+            streamAdFilterEnabled,
+            { streamAdFilterEnabled = it },
+            streamBilibiliCompatEnabled,
+            { streamBilibiliCompatEnabled = it },
+            streamKeywords,
+            { streamKeywords = it },
+            streamDetectionStatus,
+            streamMediaInfo,
+            streamDetectedUrl,
+            { screen = "player" },
+            { previewPlaylist(url, "stream", streamMediaInfo, streamDetectedUrl) },
+            { goBack() },
+        )
         "downloadMode" -> DownloadModeScreen(
             profiles = profiles,
             selectedIndex = selectedProfileIndex,
@@ -188,7 +272,14 @@ fun HomeScreen(
             items = downloadItems,
             onItemChange = { item ->
                 val itemIndex = downloadItems.indexOfFirst { it.id == item.id }
-                if (itemIndex >= 0) downloadItems[itemIndex] = item
+                if (itemIndex >= 0) {
+                    val previous = downloadItems[itemIndex]
+                    downloadItems[itemIndex] = if (previous.url == item.url) item else item.copy(
+                        detectedUrl = "",
+                        mediaInfo = null,
+                        detectionStatus = if (item.url.isBlank()) "等待输入链接" else "将在 5 秒后探测媒体类型",
+                    )
+                }
             },
             onAddItem = {
                 downloadItems += DownloadItem(nextItemId)
@@ -199,6 +290,8 @@ fun HomeScreen(
             onRefererChange = { referer = it },
             adFilterEnabled = downloadAdFilterEnabled,
             onAdFilterEnabledChange = { downloadAdFilterEnabled = it },
+            bilibiliCompatEnabled = downloadBilibiliCompatEnabled,
+            onBilibiliCompatEnabledChange = { downloadBilibiliCompatEnabled = it },
             keywords = downloadKeywords,
             onKeywordsChange = { downloadKeywords = it },
             threadText = threadText,
@@ -208,12 +301,20 @@ fun HomeScreen(
             progress = progress,
             onChooseSavePath = { directoryLauncher.launch(null) },
             onBack = { goBack() },
-            onPreview = { item -> previewPlaylist(item.url, "download") },
+            onPreview = { item -> previewPlaylist(item.url, "download", item.mediaInfo, item.detectedUrl) },
             onDownload = {
                 scope.launch {
                     val tasks = downloadItems.filter { it.url.isNotBlank() }
                     if (tasks.isEmpty()) {
                         status = "请至少添加一个媒体 URL"
+                        return@launch
+                    }
+                    if (tasks.any { it.detectedUrl != it.url || it.mediaInfo == null }) {
+                        status = "请等待所有链接完成 5 秒后的媒体探测"
+                        return@launch
+                    }
+                    if (tasks.any { it.mediaInfo?.kind == MediaKind.UNKNOWN }) {
+                        status = "存在未识别的媒体链接，请检查链接或请求头"
                         return@launch
                     }
                     try {
@@ -229,7 +330,7 @@ fun HomeScreen(
                                 val taskCache = File(batchCache, "url-${index + 1}")
                                 taskCache.deleteRecursively()
                                 finalOutput.parentFile?.mkdirs()
-                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads).collect { update ->
+                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads, item.mediaInfo, downloadBilibiliCompatEnabled).collect { update ->
                                     status = "${index + 1}/${tasks.size} ${update.message}"
                                     progress = if (update.total == 0) 0f else update.done.toFloat() / update.total.toFloat()
                                 }
@@ -276,7 +377,7 @@ fun HomeScreen(
         )
         "about" -> AboutScreen(onBack = { goBack() })
         "playlistPreview" -> PlaylistPreviewScreen(previewUrl, previewContent, previewStatus, { goBack() })
-        "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, { goBack() })
+        "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, streamMediaInfo, streamBilibiliCompatEnabled, { goBack() })
         else -> DirectoryScreen(
             onStream = { screen = "stream" },
             onDownload = { screen = "downloadMode" },
@@ -350,38 +451,51 @@ private fun DownloadModeScreen(profiles: List<DownloadProfile>, selectedIndex: I
 }
 
 @Composable
-private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, onPlay: () -> Unit, onPreview: () -> Unit, onBack: () -> Unit) {
+private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, detectionStatus: String, mediaInfo: MediaInfo?, detectedUrl: String, onPlay: () -> Unit, onPreview: () -> Unit, onBack: () -> Unit) {
+    var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     FormScreen("流播", onBack) {
         LabeledField("媒体地址") { OutlinedTextField(url, onUrlChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
-        LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
-        FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
-        if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
+        Text(detectionStatus, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        AdvancedToggle(advancedExpanded) { advancedExpanded = it }
+        if (advancedExpanded) {
+            LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            BilibiliCompatSwitch(bilibiliCompatEnabled, onBilibiliCompatEnabledChange)
+            FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
+            if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(onClick = onPlay, enabled = url.isNotBlank(), modifier = Modifier.weight(1f)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("开始播放") }
-            TextButton(onClick = onPreview, enabled = url.isNotBlank(), modifier = Modifier.weight(1f)) { Text("预览 m3u8 列表") }
+            val detected = detectedUrl == url && mediaInfo != null && mediaInfo.kind != MediaKind.UNKNOWN
+            Button(onClick = onPlay, enabled = detected, modifier = Modifier.weight(1f)) { Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("开始播放") }
+            TextButton(onClick = onPreview, enabled = detected && mediaInfo?.kind == MediaKind.HLS, modifier = Modifier.weight(1f)) { Text("预览 m3u8 列表") }
         }
     }
 }
 
 @Composable
-private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
+private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
+    var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     FormScreen("下载", onBack) {
         items.forEach { item ->
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(item.url, { onItemChange(item.copy(url = it)) }, label = { Text("媒体地址") }, singleLine = true, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { onPreview(item) }, enabled = item.url.isNotBlank()) { Text("预览") }
+                    TextButton(onClick = { onPreview(item) }, enabled = item.detectedUrl == item.url && item.mediaInfo?.kind == MediaKind.HLS) { Text("预览") }
                     IconButton(onClick = { onRemoveItem(item) }) { Icon(Icons.Default.Delete, "删除") }
                 }
+                Text(item.detectionStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 28.dp))
                 OutlinedTextField(item.outputName, { onItemChange(item.copy(outputName = it)) }, label = { Text("输出文件名") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(start = 28.dp))
             }
         }
         TextButton(onClick = onAddItem) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("添加 URL") }
-        LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
         LabeledField("并发线程数") { OutlinedTextField(threadText, onThreadTextChange, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) }
         LabeledField("保存目录") { Row(verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(savePath, {}, readOnly = true, modifier = Modifier.weight(1f)); Spacer(Modifier.width(8.dp)); Button(onClick = onChooseSavePath) { Icon(Icons.Default.Folder, null) } } }
-        FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
-        if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
+        AdvancedToggle(advancedExpanded) { advancedExpanded = it }
+        if (advancedExpanded) {
+            LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            BilibiliCompatSwitch(bilibiliCompatEnabled, onBilibiliCompatEnabledChange)
+            FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
+            if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
+        }
         Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp)); Text("开始下载") }
         LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
         Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -582,6 +696,24 @@ private fun FormScreen(title: String, onBack: () -> Unit, content: @Composable C
 private fun LabeledField(label: String, content: @Composable () -> Unit) { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(label, style = MaterialTheme.typography.labelLarge); content() } }
 
 @Composable
+private fun AdvancedToggle(expanded: Boolean, onExpandedChange: (Boolean) -> Unit) {
+    TextButton(onClick = { onExpandedChange(!expanded) }, modifier = Modifier.fillMaxWidth()) {
+        Text(if (expanded) "高级 ▲" else "高级 ▼")
+    }
+}
+
+@Composable
+private fun BilibiliCompatSwitch(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("开启B站兼容模式", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("B站链接会自动启用，也可手动开启", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(enabled, onEnabledChange)
+    }
+}
+
+@Composable
 private fun FilterSwitch(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text("去广告过滤", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); Text("关闭后不使用关键词过滤", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -637,7 +769,7 @@ private fun copyToTree(context: Context, source: File, treeUri: Uri, fileName: S
 }
 
 private fun mimeTypeFor(fileName: String): String = when (fileName.substringAfterLast('.', "").lowercase()) {
-    "mp4", "m4v" -> "video/mp4"
+    "mp4", "m4s", "m4v" -> "video/mp4"
     "mkv" -> "video/x-matroska"
     "webm" -> "video/webm"
     "mov" -> "video/quicktime"

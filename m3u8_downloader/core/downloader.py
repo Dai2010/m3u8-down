@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 import requests
 
+from .bilibili import prepare_bilibili_request
 from .parser import Segment
 
 ProgressCallback = Callable[[int, int], None]
@@ -17,11 +18,19 @@ class DownloadError(RuntimeError):
 
 
 class Downloader:
-    def __init__(self, threads: int = 16, headers: Optional[dict[str, str]] = None, retries: int = 3, timeout: int = 30):
+    def __init__(
+        self,
+        threads: int = 16,
+        headers: Optional[dict[str, str]] = None,
+        retries: int = 3,
+        timeout: int = 30,
+        bilibili_compat: bool = False,
+    ):
         self.threads = max(1, threads)
         self.headers = headers or {}
         self.retries = max(0, retries)
         self.timeout = timeout
+        self.bilibili_compat = bilibili_compat
 
     def download(
         self,
@@ -66,7 +75,8 @@ class Downloader:
             if cancel_callback and cancel_callback():
                 raise DownloadError("download cancelled")
             try:
-                with requests.get(segment.url, headers=self.headers, stream=True, timeout=self.timeout) as response:
+                request_url, request_headers = prepare_bilibili_request(segment.url, self.headers, self.bilibili_compat)
+                with requests.get(request_url, headers=request_headers, stream=True, timeout=self.timeout) as response:
                     response.raise_for_status()
                     with part_path.open("wb") as file_obj:
                         for chunk in response.iter_content(chunk_size=1024 * 256):

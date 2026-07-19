@@ -7,7 +7,8 @@
 ## 功能
 
 - 解析媒体播放列表和主播放列表，支持自动选择最高码率变体。
-- 开始下载或流播后才识别媒体类型，避免在输入阶段额外请求目标站点。
+- 用户停止输入 5 秒后自动探测媒体类型；识别为 HLS 后才开放 m3u8 全文预览，MP4、M4S、MP3、M4A、TS 等直链不会进入列表预览。
+- 无扩展名的流媒体通过响应头和少量首字节识别，不依赖 URL 是否包含 `.m4s`；探测结果会复用于下载和流播，避免重复请求。
 - 支持 HLS/m3u8、DASH/mpd、Smooth Streaming、RTSP 和常见直链音视频；HLS 继续使用内部分片下载，其他格式通过 FFmpeg/ExoPlayer 兜底。
 - 按关键词或正则过滤广告片段。
 - 多线程下载 TS 分片，支持 `.part` 临时文件和已完成分片跳过。
@@ -19,10 +20,13 @@
 - GUI、TUI 和 Android 端支持配置文件管理，可新建、修改和删除过滤、线程、保存目录、标签和备注。
 - Android 端以“流播”“下载”和“设置”作为入口，支持在线播放、下载和统一设置管理。
 - 去广告过滤是可选功能，关闭时不会显示过滤关键词输入。
+- 自动识别 B 站链接并使用兼容请求方式；桌面 GUI 和 Android 的下载、流播页可在“高级”中手动开启“开启B站兼容模式”。
 - Android 播放页面支持屏幕旋转时保留播放状态，系统返回手势会回到上一界面。
 - Release workflow 可产出 Android APK、Linux deb、Windows exe 和 Windows msi。
 
 ## 桌面端使用
+
+完整的功能、开关、B 站地址类型和各端操作步骤请参阅：[USER_MANUAL.md](USER_MANUAL.md)。
 
 安装运行环境：
 
@@ -96,14 +100,14 @@ Android APK 面向不依赖 GMS 的侧载安装场景，当前优先发布 `arm6
 - Target SDK: 35
 - 架构：`arm64-v8a`
 
-应用打开后分为“流播”“下载”和“设置”三个入口。设置页统一管理配置、外观和关于信息；配置管理会列出所有已有配置，点击配置即可编辑，右下角可新建配置。
+应用打开后分为“流播”“下载”和“设置”三个入口。下载和流播页的“高级”区域包含去广告过滤和“开启B站兼容模式”；B 站链接会自动启用兼容请求方式，隐藏或非标准链接也可以手动开启。设置页统一管理配置、外观和关于信息；配置管理会列出所有已有配置，点击配置即可编辑，右下角可新建配置。
 
 ## Windows 端
 
 Windows 版本由 GitHub Actions Release workflow 在 `windows-latest` 上构建，产物包括：
 
-- `m3u8-downloader-4.2.1-windows-x64.exe`
-- `m3u8-downloader-4.2.1-windows-x64.msi`
+- `m3u8-downloader-4.2.2-windows-x64.exe`
+- `m3u8-downloader-4.2.2-windows-x64.msi`
 
 Windows `.exe` 安装器和 `.msi` 都会安装 GUI、CLI 和 TUI 三个入口，并把安装目录加入 PATH，PowerShell 中可直接运行：
 
@@ -144,10 +148,12 @@ ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8
 Linux deb 构建示例：
 
 ```bash
-packaging/linux/build_deb.sh 4.2.1
+packaging/linux/build_deb.sh 4.2.2
 ```
 
-发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.1`。
+所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64 和 Windows x64；发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.2`。
+
+Android 发布前必须配置以下 GitHub Actions secrets：`M3U8_ANDROID_KEYSTORE_BASE64`、`M3U8_ANDROID_STORE_PASSWORD`、`M3U8_ANDROID_KEY_ALIAS` 和 `M3U8_ANDROID_KEY_PASSWORD`。工作流会使用原升级签名私钥签名，并校验旧版证书指纹；缺少私钥或指纹不一致时直接失败，不上传不可升级的 APK。
 
 ## 发布产物
 
@@ -156,6 +162,6 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 当前发布资产包括：
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
-- `m3u8-downloader_4.2.1_amd64.deb`
-- `m3u8-downloader-4.2.1-windows-x64.exe`
-- `m3u8-downloader-4.2.1-windows-x64.msi`
+- `m3u8-downloader_4.2.2_amd64.deb`
+- `m3u8-downloader-4.2.2-windows-x64.exe`
+- `m3u8-downloader-4.2.2-windows-x64.msi`

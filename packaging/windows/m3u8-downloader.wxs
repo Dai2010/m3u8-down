@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <?ifndef AppVersion ?><?define AppVersion = "4.2.1" ?><?endif ?>
+  <?ifndef AppVersion ?><?define AppVersion = "4.2.2" ?><?endif ?>
   <?ifndef LicenseRtf ?><?define LicenseRtf = "dist\GPL-3.0.rtf" ?><?endif ?>
   <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="$(var.AppVersion)" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Description="m3u8 Downloader Windows installer - GPL License v3.0" Comments="Distributed under the GNU General Public License version 3.0." />

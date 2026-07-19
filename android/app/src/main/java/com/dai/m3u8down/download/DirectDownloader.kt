@@ -1,5 +1,8 @@
 package com.dai2010.m3u8down.download
 
+import com.dai2010.m3u8down.network.isBilibiliUrl
+import com.dai2010.m3u8down.network.prepareBilibiliHeaders
+import com.dai2010.m3u8down.network.prepareBilibiliUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -9,13 +12,17 @@ import java.io.File
 class DirectDownloader(
     private val client: OkHttpClient,
     private val headers: Map<String, String> = emptyMap(),
+    private val bilibiliCompatEnabled: Boolean = false,
 ) {
     suspend fun download(url: String, outputFile: File): File = withContext(Dispatchers.IO) {
         outputFile.parentFile?.mkdirs()
         val part = File("${outputFile.absolutePath}.part")
         try {
-            val requestBuilder = Request.Builder().url(url)
-            headers.forEach { (name, value) -> if (value.isNotBlank()) requestBuilder.header(name, value) }
+            val enabled = bilibiliCompatEnabled || isBilibiliUrl(url)
+            val requestUrl = prepareBilibiliUrl(url, enabled)
+            val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, enabled)
+            val requestBuilder = Request.Builder().url(requestUrl)
+            requestHeaders.forEach { (name, value) -> if (value.isNotBlank()) requestBuilder.header(name, value) }
             client.newCall(requestBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) error("HTTP ${response.code}: $url")
                 response.body?.byteStream()?.use { input ->

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag, for example v4.2.1
+        description: Release tag, for example v4.2.2
         required: true
-        default: v4.2.1
+        default: v4.2.2
   push:
     tags:
       - "v*"
@@ -49,6 +49,37 @@ jobs:
         env:
           CI_MAVEN_REPOS: official
         run: gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1
+      - name: Sign Android APK with the upgrade key
+        env:
+          M3U8_ANDROID_KEYSTORE_BASE64: ${{ secrets.M3U8_ANDROID_KEYSTORE_BASE64 }}
+          M3U8_ANDROID_STORE_PASSWORD: ${{ secrets.M3U8_ANDROID_STORE_PASSWORD }}
+          M3U8_ANDROID_KEY_ALIAS: ${{ secrets.M3U8_ANDROID_KEY_ALIAS }}
+          M3U8_ANDROID_KEY_PASSWORD: ${{ secrets.M3U8_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$M3U8_ANDROID_KEYSTORE_BASE64"
+          test -n "$M3U8_ANDROID_STORE_PASSWORD"
+          test -n "$M3U8_ANDROID_KEY_ALIAS"
+          test -n "$M3U8_ANDROID_KEY_PASSWORD"
+          signing_dir="$GITHUB_WORKSPACE/.ci-signing"
+          mkdir -p "$signing_dir"
+          trap 'rm -rf "$signing_dir"' EXIT
+          printf '%s' "$M3U8_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/m3u8-down-release.keystore"
+          apk="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$apksigner"
+          "$apksigner" sign \
+            --ks "$signing_dir/m3u8-down-release.keystore" \
+            --ks-pass "env:M3U8_ANDROID_STORE_PASSWORD" \
+            --ks-key-alias "$M3U8_ANDROID_KEY_ALIAS" \
+            --key-pass "env:M3U8_ANDROID_KEY_PASSWORD" \
+            --out "$signing_dir/signed.apk" \
+            "$apk"
+          mv "$signing_dir/signed.apk" "$apk"
+          "$apksigner" verify --print-certs "$apk" > "$signing_dir/certificates.txt"
+          actual_fingerprint="$(sed -n 's/.*certificate SHA-256 digest: //p' "$signing_dir/certificates.txt" | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          expected_fingerprint="fa4546904d1c4b9de5737418bda9cf177198f850ebfcab3b95480e0bdfbe9201"
+          test "$actual_fingerprint" = "$expected_fingerprint"
       - name: Build deb
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"

@@ -56,15 +56,19 @@ def test_main_downloads_progressive_media_directly(monkeypatch, tmp_path, capsys
     monkeypatch.setattr(sys, "argv", ["m3u8-downloader", "https://cdn.test/video.mp4", "-o", str(output)])
     monkeypatch.setattr(main_module, "setup_logging", lambda: None)
     monkeypatch.setattr(main_module, "load_config", lambda: {"headers": {}, "filter_keywords": [], "threads": 16})
-    monkeypatch.setattr(main_module, "detect_media_type", lambda url, headers: MediaInfo(MediaKind.PROGRESSIVE, "url"))
+    monkeypatch.setattr(main_module, "detect_media_type", lambda url, headers, **kwargs: MediaInfo(MediaKind.PROGRESSIVE, "url"))
     monkeypatch.setattr(main_module, "require_ffmpeg", lambda: (_ for _ in ()).throw(AssertionError("should not require ffmpeg")))
-    monkeypatch.setattr(main_module, "download_direct_media", lambda url, target, headers: calls.append((url, target, headers)))
+    monkeypatch.setattr(
+        main_module,
+        "download_direct_media",
+        lambda url, target, headers, **kwargs: calls.append((url, target, headers, kwargs)),
+    )
     monkeypatch.setattr(main_module, "download_with_ffmpeg", lambda *args: (_ for _ in ()).throw(AssertionError("should not use ffmpeg")))
     monkeypatch.setattr(main_module, "_load_media_playlist", lambda *args: (_ for _ in ()).throw(AssertionError("should not load hls playlist")))
 
     main_module.main()
 
-    assert calls == [("https://cdn.test/video.mp4", output, {})]
+    assert calls == [("https://cdn.test/video.mp4", output, {}, {"bilibili_compat": False})]
     assert "detected direct media" in capsys.readouterr().out
 
 
@@ -75,15 +79,19 @@ def test_main_downloads_stream_manifests_with_ffmpeg(monkeypatch, tmp_path, caps
     monkeypatch.setattr(sys, "argv", ["m3u8-downloader", "https://cdn.test/manifest.mpd", "-o", str(output)])
     monkeypatch.setattr(main_module, "setup_logging", lambda: None)
     monkeypatch.setattr(main_module, "load_config", lambda: {"headers": {}, "filter_keywords": [], "threads": 16})
-    monkeypatch.setattr(main_module, "detect_media_type", lambda url, headers: MediaInfo(MediaKind.DASH, "url"))
+    monkeypatch.setattr(main_module, "detect_media_type", lambda url, headers, **kwargs: MediaInfo(MediaKind.DASH, "url"))
     monkeypatch.setattr(main_module, "require_ffmpeg", lambda: None)
     monkeypatch.setattr(main_module, "download_direct_media", lambda *args: (_ for _ in ()).throw(AssertionError("should not use direct download")))
-    monkeypatch.setattr(main_module, "download_with_ffmpeg", lambda url, target, headers: calls.append((url, target, headers)))
+    monkeypatch.setattr(
+        main_module,
+        "download_with_ffmpeg",
+        lambda url, target, headers, **kwargs: calls.append((url, target, headers, kwargs)),
+    )
     monkeypatch.setattr(main_module, "_load_media_playlist", lambda *args: (_ for _ in ()).throw(AssertionError("should not load hls playlist")))
 
     main_module.main()
 
-    assert calls == [("https://cdn.test/manifest.mpd", output, {})]
+    assert calls == [("https://cdn.test/manifest.mpd", output, {}, {"bilibili_compat": False})]
     assert "detected MPEG-DASH/mpd" in capsys.readouterr().out
 
 
