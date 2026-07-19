@@ -7,8 +7,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from PyQt6.QtCore import QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QPointF, QThread, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QFont, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -27,6 +27,8 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSpinBox,
+    QStyle,
+    QStyleOptionButton,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -46,6 +48,32 @@ from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
 from .settings_dialog import SettingsDialog
 from .theme import apply_gui_theme
+
+
+class CheckMarkCheckBox(QCheckBox):
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self.isChecked():
+            return
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        indicator_rect = self.style().subElementRect(QStyle.SubElement.SE_CheckBoxIndicator, option, self)
+        if indicator_rect.isEmpty():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self.palette().color(QPalette.ColorRole.Highlight))
+        pen.setWidthF(max(1.5, indicator_rect.width() / 7))
+        pen.setCapStyle(Qt.PenCapStyle.Round)
+        pen.setJoinStyle(Qt.JoinStyle.Round)
+        painter.setPen(pen)
+        left = indicator_rect.left() + indicator_rect.width() * 0.24
+        middle = indicator_rect.left() + indicator_rect.width() * 0.45
+        right = indicator_rect.left() + indicator_rect.width() * 0.78
+        top = indicator_rect.top()
+        bottom = indicator_rect.bottom()
+        painter.drawLine(QPointF(left, top + indicator_rect.height() * 0.52), QPointF(middle, bottom - indicator_rect.height() * 0.25))
+        painter.drawLine(QPointF(middle, bottom - indicator_rect.height() * 0.25), QPointF(right, top + indicator_rect.height() * 0.25))
 
 
 @dataclass
@@ -319,7 +347,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing URL", "Enter a media URL.")
             return
         if url != self.stream_detected_url or self.stream_media_info is None:
-            QMessageBox.information(self, "Media detection pending", "Wait for the 5-second media detection to finish before starting playback.")
+            QMessageBox.information(self, "Media detection pending", "Wait for media detection to finish before starting playback.")
             return
         if self.stream_media_info.kind == MediaKind.UNKNOWN:
             QMessageBox.warning(self, "Unknown media", "The media type could not be detected. Check the URL or request headers.")
@@ -351,7 +379,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing URL", "Enter an m3u8 URL before previewing.")
             return
         if url != detected_url or media_info is None:
-            QMessageBox.information(self, "Media detection pending", "Wait for the 5-second media detection to finish before previewing.")
+            QMessageBox.information(self, "Media detection pending", "Wait for media detection to finish before previewing.")
             return
         if media_info.kind != MediaKind.HLS:
             QMessageBox.warning(self, "Not an m3u8 playlist", f"Detected {media_info.display_name}; m3u8 preview is only available for HLS playlists.")
@@ -393,16 +421,22 @@ class MainWindow(QMainWindow):
     def _schedule_stream_detection(self) -> None:
         if not hasattr(self, "stream_url"):
             return
+        self.stream_detect_timer.stop()
         url = self.stream_url.text().strip()
         self.stream_media_info = None
         self.stream_detected_url = ""
         self.preview_button.setEnabled(False)
         self.proxy_button.setEnabled(False)
+        self.detect_stream_button.setEnabled(bool(url))
         if not url:
-            self.stream_status.setText("输入链接后等待 5 秒自动探测")
+            self.stream_status.setText("输入链接后自动探测，或点击立即探测")
             return
         self.stream_status.setText("将在 5 秒后探测媒体类型")
         self.stream_detect_timer.start(5000)
+
+    def _detect_stream_now(self) -> None:
+        self.stream_detect_timer.stop()
+        self._detect_stream_url()
 
     def _detect_stream_url(self) -> None:
         url = self.stream_url.text().strip()
@@ -535,13 +569,12 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.config, self.profiles, self)
+        dialog.theme_preview_requested.connect(lambda theme: self._preview_settings_theme(dialog, theme))
         if dialog.exec():
             self.config = load_config()
             self.profiles = load_profiles(self.config)
             self.active_profile = self.profiles[0]
-            app = QApplication.instance()
-            if app is not None:
-                apply_gui_theme(app, self.config.get("theme", "system"), self.config.get("button_color", ""))
+            self._apply_theme(self.config.get("theme", "system"), self.config.get("button_color", ""))
             referer = self.config.get("headers", {}).get("Referer", "")
             self.stream_referer.setText(referer)
             self.download_referer.setText(referer)
@@ -552,6 +585,16 @@ class MainWindow(QMainWindow):
             self._apply_profile(self.active_profile)
             self._invalidate_media_detection()
             self._append_log("Settings saved")
+        else:
+            self._apply_theme(self.config.get("theme", "system"), self.config.get("button_color", ""))
+
+    def _preview_settings_theme(self, dialog: SettingsDialog, theme: str) -> None:
+        self._apply_theme(theme, dialog.button_color.text())
+
+    def _apply_theme(self, theme: str, button_color: str) -> None:
+        app = QApplication.instance()
+        if app is not None:
+            apply_gui_theme(app, theme, button_color)
 
     def _choose_download_mode(self) -> bool:
         dialog = DownloadModeDialog(self.profiles, self)
@@ -697,13 +740,20 @@ class MainWindow(QMainWindow):
 
         self.stream_url = QLineEdit()
         self.stream_url.setPlaceholderText("https://example.com/video/index.m3u8 or video.mp4")
+        self.detect_stream_button = QPushButton("立即探测")
+        self.detect_stream_button.setObjectName("secondary")
+        self.detect_stream_button.clicked.connect(self._detect_stream_now)
+        self.stream_url.returnPressed.connect(self._detect_stream_now)
+        stream_url_row = QHBoxLayout()
+        stream_url_row.addWidget(self.stream_url)
+        stream_url_row.addWidget(self.detect_stream_button)
         self.stream_referer = QLineEdit(self.config.get("headers", {}).get("Referer", ""))
         self.stream_detect_timer = QTimer(self)
         self.stream_detect_timer.setSingleShot(True)
         self.stream_detect_timer.timeout.connect(self._detect_stream_url)
-        self.stream_ad_filter = QCheckBox("启用去广告过滤")
+        self.stream_ad_filter = CheckMarkCheckBox("启用去广告过滤")
         self.stream_ad_filter.toggled.connect(self._sync_filter_visibility)
-        self.stream_bilibili_compat = QCheckBox("开启B站兼容模式")
+        self.stream_bilibili_compat = CheckMarkCheckBox("开启B站兼容模式")
         self.stream_bilibili_compat.setChecked(bool(self.config.get("bilibili_compat", False)))
         self.stream_bilibili_compat.toggled.connect(lambda _checked: self._schedule_stream_detection())
         self.stream_keywords = QTextEdit("\n".join(self.config.get("filter_keywords", [])))
@@ -711,7 +761,7 @@ class MainWindow(QMainWindow):
         self.stream_keywords_label = QLabel("过滤关键词，每行一个")
 
         form = QFormLayout()
-        form.addRow("媒体地址", self.stream_url)
+        form.addRow("媒体地址", stream_url_row)
         layout.addLayout(form)
         advanced_toggle = QPushButton("高级")
         advanced_toggle.setCheckable(True)
@@ -780,10 +830,10 @@ class MainWindow(QMainWindow):
         self.download_threads = QSpinBox()
         self.download_threads.setRange(1, 128)
         self.download_threads.setValue(int(self.active_profile.get("threads", self.config.get("threads", 16))))
-        self.download_ad_filter = QCheckBox("启用去广告过滤")
+        self.download_ad_filter = CheckMarkCheckBox("启用去广告过滤")
         self.download_ad_filter.setChecked(bool(self.active_profile.get("ad_filter", False)))
         self.download_ad_filter.toggled.connect(self._sync_filter_visibility)
-        self.download_bilibili_compat = QCheckBox("开启B站兼容模式")
+        self.download_bilibili_compat = CheckMarkCheckBox("开启B站兼容模式")
         self.download_bilibili_compat.setChecked(bool(self.config.get("bilibili_compat", False)))
         self.download_bilibili_compat.toggled.connect(lambda _checked: self._invalidate_media_detection())
         self.download_keywords = QTextEdit("\n".join(self.active_profile.get("filter_keywords", self.config.get("filter_keywords", []))))

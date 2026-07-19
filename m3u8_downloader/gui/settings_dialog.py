@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PyQt6.QtCore import QEvent, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
@@ -24,14 +25,17 @@ from PyQt6.QtWidgets import (
 
 from .. import __version__
 from ..config.manager import delete_profile, new_profile, save_profiles, upsert_profile
-from ..config.theme import THEME_OPTIONS, normalize_button_color
+from ..config.theme import THEME_OPTIONS, normalize_button_color, normalize_theme
 
 
 class SettingsDialog(QDialog):
+    theme_preview_requested = pyqtSignal(str)
+
     def __init__(self, config: dict, profiles: list[dict] | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
         self._config = config.copy()
+        self._initial_theme = normalize_theme(config.get("theme", "system"))
         self.profiles = [profile.copy() for profile in (profiles or [])] or [new_profile("默认配置")]
 
         self.threads = QSpinBox()
@@ -57,6 +61,10 @@ class SettingsDialog(QDialog):
         self.theme.addItems(THEME_OPTIONS)
         index = self.theme.findText(str(config.get("theme", "system")))
         self.theme.setCurrentIndex(max(0, index))
+        self.theme.currentTextChanged.connect(self._preview_current_theme)
+        self.theme.view().setMouseTracking(True)
+        self.theme.view().entered.connect(self._preview_hovered_theme)
+        self.theme.view().viewport().installEventFilter(self)
 
         self.button_color = QLineEdit(str(config.get("button_color", "")))
         self.button_color.setPlaceholderText("默认主题色，或 #146C5A")
@@ -120,6 +128,22 @@ class SettingsDialog(QDialog):
         self._save_current_profile()
         self._config = save_profiles(self.profiles, self.config())
         super().accept()
+
+    def reject(self) -> None:
+        self.theme_preview_requested.emit(self._initial_theme)
+        super().reject()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.theme.view().viewport() and event.type() == QEvent.Type.Leave:
+            self.theme_preview_requested.emit(self.theme.currentText())
+        return super().eventFilter(watched, event)
+
+    def _preview_current_theme(self, theme: str) -> None:
+        self.theme_preview_requested.emit(theme)
+
+    def _preview_hovered_theme(self, index) -> None:
+        if index.isValid():
+            self.theme_preview_requested.emit(self.theme.itemText(index.row()))
 
     def _choose_save_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择保存目录", self.save_dir.text())
