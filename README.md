@@ -22,7 +22,7 @@
 - 去广告过滤是可选功能，关闭时不会显示过滤关键词输入。
 - 自动识别 B 站链接并使用兼容请求方式；桌面 GUI 和 Android 的下载、流播页可在“高级”中手动开启“开启B站兼容模式”。
 - Android 播放页面支持屏幕旋转时保留播放状态，系统返回手势会回到上一界面。
-- Release workflow 可产出 Android APK、Linux deb、Windows exe 和 Windows msi。
+- Release workflow 可产出 Android APK、Linux deb、Termux aarch64 deb、Windows exe 和 Windows msi。
 
 ## 桌面端使用
 
@@ -77,6 +77,14 @@ python -m m3u8_downloader.gui.app
 
 ```bash
 python -m m3u8_downloader.tui.app
+```
+
+Termux 版本不依赖桌面 Qt，TUI 已按竖屏和小屏终端设计：下载、配置和日志分为独立页面，各页面可上下滑动；媒体地址支持点击“立即探测”或按回车探测。发布页提供 `m3u8-downloader_<版本>_termux_aarch64.deb`，在 arm64 Termux 中安装：
+
+```bash
+pkg install python ffmpeg
+apt install ./m3u8-downloader_<版本>_termux_aarch64.deb
+m3u8-downloader-tui
 ```
 
 HLS 流播代理会输出本地播放地址，可复制到 mpv 或 VLC；非 HLS 媒体会直接输出原播放地址：
@@ -151,7 +159,7 @@ Linux deb 构建示例：
 packaging/linux/build_deb.sh 4.2.3
 ```
 
-所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64 和 Windows x64；发布 Windows、Android 和 Linux 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.3`。
+所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64 和 Windows x64；发布 Windows、Android、Linux 和 Termux aarch64 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.4`。
 
 Android 发布前必须配置以下 GitHub Actions secrets：`M3U8_ANDROID_KEYSTORE_BASE64`、`M3U8_ANDROID_STORE_PASSWORD`、`M3U8_ANDROID_KEY_ALIAS` 和 `M3U8_ANDROID_KEY_PASSWORD`。工作流会使用持久保存的 PKCS#12 发布密钥签名并校验证书指纹；缺少私钥或指纹不一致时直接失败，不上传不可升级的 APK。更换发布密钥后，旧证书签名的 APK 不能直接覆盖安装。
 
@@ -163,5 +171,6 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
 - `m3u8-downloader_4.2.3_amd64.deb`
+- `m3u8-downloader_4.2.4_termux_aarch64.deb`
 - `m3u8-downloader-4.2.3-windows-x64.exe`
 - `m3u8-downloader-4.2.3-windows-x64.msi`

@@ -6,8 +6,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressBar, Static
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressBar, Static, TabPane, TabbedContent
 
 from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
 from ..config.theme import should_use_dark_theme
@@ -24,12 +24,40 @@ from ..main import _load_media_playlist
 
 class M3U8DownloaderTUI(App):
     CSS = """
-    Screen { padding: 1; }
-    Input { margin-bottom: 1; }
-    Button { margin-right: 1; }
-    #log { height: 1fr; border: solid $surface; }
+    Screen { padding: 0; }
+    TabbedContent { height: 1fr; }
+    TabPane { padding: 0; }
+    .page {
+        width: 100%;
+        height: 1fr;
+        padding: 1;
+        overflow-y: scroll;
+        scrollbar-size-vertical: 1;
+    }
+    .section-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    .hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    Input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    Button {
+        width: 100%;
+        min-width: 1;
+        margin: 0 0 1 0;
+    }
+    .actions { width: 100%; height: auto; }
+    #status { margin: 1 0; }
+    #progress { margin-bottom: 1; }
+    #log { width: 100%; height: 1fr; min-height: 8; border: solid $surface; }
     """
     BINDINGS = [("q", "quit", "Quit")]
+    DETECTION_DELAY_SECONDS = 1.0
 
     def __init__(self):
         super().__init__()
@@ -45,31 +73,42 @@ class M3U8DownloaderTUI(App):
     def compose(self) -> ComposeResult:
         profile = self.profiles[self.active_profile_index]
         yield Header()
-        with Vertical():
-            yield Input(placeholder="Media URL", id="url")
-            yield Input(value="", placeholder="Output path; blank uses URL extension", id="output")
-            yield Input(value=self.config.get("headers", {}).get("Referer", ""), placeholder="Referer", id="referer")
-            with Horizontal():
-                yield Button("Download", id="download", variant="primary")
-                yield Button("Start Proxy", id="proxy", variant="success")
-                yield Button("Stop Proxy", id="stop-proxy", variant="default")
-            yield Label("Profiles")
-            yield Input(value="1", placeholder="Profile number", id="profile-index")
-            yield Input(value=profile.get("name", "默认配置"), placeholder="Profile name", id="profile-name")
-            yield Input(value=", ".join(profile.get("tags", [])), placeholder="Tags, comma separated", id="profile-tags")
-            yield Input(value=profile.get("note", ""), placeholder="Note", id="profile-note")
-            yield Input(value="yes" if profile.get("ad_filter", False) else "no", placeholder="Ad filter yes/no", id="profile-ad-filter")
-            yield Input(value=" | ".join(profile.get("filter_keywords", [])), placeholder="Filter keywords, separated by |", id="profile-keywords")
-            yield Input(value=str(profile.get("threads", self.config.get("threads", 16))), placeholder="Threads", id="profile-threads")
-            yield Input(value=profile.get("save_dir", self.config.get("save_dir", "~/Downloads")), placeholder="Save directory", id="profile-save-dir")
-            with Horizontal():
-                yield Button("Load Profile", id="load-profile")
-                yield Button("New Profile", id="new-profile")
-                yield Button("Save Profile", id="save-profile", variant="success")
-                yield Button("Delete Profile", id="delete-profile", variant="error")
-            yield ProgressBar(total=100, id="progress")
-            yield Static("Idle", id="status")
-            yield Log(id="log")
+        with TabbedContent(initial="download-tab"):
+            with TabPane("下载", id="download-tab"):
+                with VerticalScroll(classes="page"):
+                    yield Label("媒体下载与流播", classes="section-title")
+                    yield Input(placeholder="Media URL", id="url")
+                    yield Button("立即探测（回车也可）", id="detect")
+                    yield Input(value="", placeholder="Output path; blank uses URL extension", id="output")
+                    yield Input(value=self.config.get("headers", {}).get("Referer", ""), placeholder="Referer", id="referer")
+                    yield Static("输入链接后自动探测", id="status")
+                    yield ProgressBar(total=100, id="progress")
+                    with Vertical(classes="actions"):
+                        yield Button("Download", id="download", variant="primary")
+                        yield Button("Start Proxy", id="proxy", variant="success")
+                        yield Button("Stop Proxy", id="stop-proxy", variant="default")
+                    yield Label("下载、探测和代理操作均可在本页完成。", classes="hint")
+            with TabPane("配置", id="profiles-tab"):
+                with VerticalScroll(classes="page"):
+                    yield Label("Profiles", classes="section-title")
+                    yield Label("修改配置后点击保存；配置编号从 1 开始。", classes="hint")
+                    yield Input(value="1", placeholder="Profile number", id="profile-index")
+                    yield Input(value=profile.get("name", "默认配置"), placeholder="Profile name", id="profile-name")
+                    yield Input(value=", ".join(profile.get("tags", [])), placeholder="Tags, comma separated", id="profile-tags")
+                    yield Input(value=profile.get("note", ""), placeholder="Note", id="profile-note")
+                    yield Input(value="yes" if profile.get("ad_filter", False) else "no", placeholder="Ad filter yes/no", id="profile-ad-filter")
+                    yield Input(value=" | ".join(profile.get("filter_keywords", [])), placeholder="Filter keywords, separated by |", id="profile-keywords")
+                    yield Input(value=str(profile.get("threads", self.config.get("threads", 16))), placeholder="Threads", id="profile-threads")
+                    yield Input(value=profile.get("save_dir", self.config.get("save_dir", "~/Downloads")), placeholder="Save directory", id="profile-save-dir")
+                    with Vertical(classes="actions"):
+                        yield Button("Load Profile", id="load-profile")
+                        yield Button("New Profile", id="new-profile")
+                        yield Button("Save Profile", id="save-profile", variant="success")
+                        yield Button("Delete Profile", id="delete-profile", variant="error")
+            with TabPane("日志", id="logs-tab"):
+                with VerticalScroll(classes="page"):
+                    yield Label("运行日志", classes="section-title")
+                    yield Log(id="log")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -78,6 +117,8 @@ class M3U8DownloaderTUI(App):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "download":
             self.run_worker(self._download(), exclusive=True)
+        elif event.button.id == "detect":
+            self._start_detection()
         elif event.button.id == "proxy":
             await self._start_proxy()
         elif event.button.id == "stop-proxy":
@@ -91,6 +132,10 @@ class M3U8DownloaderTUI(App):
         elif event.button.id == "delete-profile":
             self._delete_profile()
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "url":
+            self._start_detection()
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id != "url":
             return
@@ -100,14 +145,26 @@ class M3U8DownloaderTUI(App):
         self.detected_media_info = None
         url = event.value.strip()
         if not url:
-            self.query_one("#status", Static).update("输入链接后等待 5 秒自动探测")
+            self.query_one("#status", Static).update("请输入媒体链接")
             return
-        self.query_one("#status", Static).update("将在 5 秒后探测媒体类型")
+        self.query_one("#status", Static).update("将在 1 秒后自动探测，也可立即点击探测")
         self.detection_task = asyncio.create_task(self._detect_after_delay(url))
 
-    async def _detect_after_delay(self, url: str) -> None:
+    def _start_detection(self) -> None:
+        if self.detection_task and not self.detection_task.done():
+            self.detection_task.cancel()
+        url = self.query_one("#url", Input).value.strip()
+        self.detected_url = ""
+        self.detected_media_info = None
+        if not url:
+            self.query_one("#status", Static).update("请输入媒体链接")
+            return
+        self.query_one("#status", Static).update("正在探测媒体类型")
+        self.detection_task = asyncio.create_task(self._detect_after_delay(url, delay=0))
+
+    async def _detect_after_delay(self, url: str, delay: float = DETECTION_DELAY_SECONDS) -> None:
         try:
-            await asyncio.sleep(5)
+            await asyncio.sleep(delay)
             self.query_one("#status", Static).update("正在探测媒体类型")
             media_info = await asyncio.to_thread(detect_media_type, url, self._headers())
             if self.query_one("#url", Input).value.strip() != url:
@@ -132,7 +189,7 @@ class M3U8DownloaderTUI(App):
         try:
             headers = self._headers()
             if url != self.detected_url or self.detected_media_info is None:
-                self._write("Wait for the 5-second media detection to finish")
+                self._write("请先完成媒体探测")
                 return
             media_info = self.detected_media_info
             self._write(f"Detected {media_info.display_name}")
@@ -182,7 +239,7 @@ class M3U8DownloaderTUI(App):
             self._write(self.proxy.get_stream_url(url))
             return
         if url != self.detected_url or self.detected_media_info is None:
-            self._write("Wait for the 5-second media detection to finish")
+            self._write("请先完成媒体探测")
             return
         headers = self._headers()
         media_info = self.detected_media_info

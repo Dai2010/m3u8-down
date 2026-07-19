@@ -258,14 +258,27 @@ python -m m3u8_downloader.tui.app
 TUI 提供：
 
 - 媒体 URL、输出路径、Referer 输入。
-- 5 秒延迟媒体探测。
+- 1 秒延迟媒体探测，也可以点击“立即探测”或在媒体地址输入框按回车立即探测。
 - `Download` 下载按钮。
 - `Start Proxy`、`Stop Proxy` 本地流播代理按钮。
 - 配置编号、名称、标签、备注、去广告开关、关键词、线程数和保存目录。
 - `Load Profile`、`New Profile`、`Save Profile`、`Delete Profile` 配置管理按钮。
+- 下载、配置和日志分为独立页面，每个页面都支持上下滑动，适合 Termux 的竖屏和小屏终端。
 - `q` 退出，并在退出时停止代理。
 
 TUI 对标准 B 站 CDN 地址会自动识别并使用兼容请求，但没有单独的 `开启B站兼容模式` 可视开关；隐藏 CDN 地址请改用 GUI、Android 或 CLI 配置。
+
+### Termux
+
+Termux 版本不需要桌面 Qt，发布页提供 arm64/aarch64 安装包。先安装运行依赖，再安装 deb 包：
+
+```bash
+pkg install python ffmpeg
+apt install ./m3u8-downloader_<版本>_termux_aarch64.deb
+m3u8-downloader-tui
+```
+
+也可以使用 `m3u8-downloader` 进入 TUI，或使用 `m3u8-downloader <媒体地址>` 执行命令行下载。
 
 ## 六、Android
 
@@ -374,7 +387,7 @@ m3u8-downloader 输入：页面解析后得到的最终媒体地址
 
 ### 提示媒体类型未知
 
-确认粘贴的是最终媒体地址；等待 5 秒探测；检查地址是否过期；必要时填写 Referer；B 站非标准 CDN 可以打开 `开启B站兼容模式`。
+确认粘贴的是最终媒体地址；等待约 1 秒探测，或点击“立即探测”；检查地址是否过期；必要时填写 Referer；B 站非标准 CDN 可以打开 `开启B站兼容模式`。
 
 ### B 站返回 403
 
