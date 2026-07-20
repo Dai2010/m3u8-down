@@ -61,7 +61,7 @@ def test_config_cookie_is_added_to_bilibili_headers_without_overwriting_explicit
 
 
 def test_manifest_selection_uses_codec_policy_before_bandwidth():
-    avc = BilibiliTrack("https://video/avc", (), "video", quality_id=80, bandwidth=100)
+    avc = BilibiliTrack("https://video/avc", (), "video", quality_id=80, bandwidth=100, codec_id=7)
     hevc = BilibiliTrack("https://video/hevc", (), "video", quality_id=80, bandwidth=200, codec_id=12)
     selected_page = BilibiliPage(1, "1", "", 0)
     manifest = BilibiliMediaManifest(
