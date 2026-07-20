@@ -129,9 +129,11 @@ jobs:
           $version = "3.0.21"
           $archive = Join-Path $env:RUNNER_TEMP "vlc-$version-win64.zip"
           $url = "https://get.videolan.org/vlc/$version/win64/vlc-$version-win64.zip"
-          Invoke-WebRequest -Uri $url -OutFile $archive
-          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP -Force
-          $directory = Get-ChildItem $env:RUNNER_TEMP -Directory -Filter "vlc-$version-win64" | Select-Object -First 1
+          curl.exe -L --fail --retry 3 --retry-delay 2 --output $archive $url
+          if ($LASTEXITCODE -ne 0) { throw "VLC download failed with exit code $LASTEXITCODE" }
+          tar.exe -xf $archive -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw "VLC archive extraction failed with exit code $LASTEXITCODE" }
+          $directory = Get-ChildItem $env:RUNNER_TEMP -Filter "libvlc.dll" -Recurse -File | Select-Object -First 1 | ForEach-Object { $_.Directory }
           if (-not $directory) { throw "VLC archive directory was not found" }
           "VLC_DIR=$($directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Prepare release metadata and license
