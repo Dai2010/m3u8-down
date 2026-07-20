@@ -76,6 +76,9 @@ import com.dai2010.m3u8down.download.DownloadManager
 import com.dai2010.m3u8down.media.MediaInfo
 import com.dai2010.m3u8down.media.MediaKind
 import com.dai2010.m3u8down.media.MediaTypeDetector
+import com.dai2010.m3u8down.network.BilibiliCookieStore
+import com.dai2010.m3u8down.network.BilibiliPageCollection
+import com.dai2010.m3u8down.network.BilibiliStreamResolver
 import com.dai2010.m3u8down.network.isBilibiliUrl
 import com.dai2010.m3u8down.network.mediaRequestHeaders
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
@@ -122,6 +125,12 @@ fun HomeScreen(
     var downloadBilibiliCompatEnabled by rememberSaveable { mutableStateOf(false) }
     var downloadKeywords by rememberSaveable { mutableStateOf(DEFAULT_FILTER_KEYWORDS_TEXT) }
     var threadText by rememberSaveable { mutableStateOf("8") }
+    var bilibiliQualityText by rememberSaveable { mutableStateOf("") }
+    var bilibiliSaveSubtitles by rememberSaveable { mutableStateOf(true) }
+    var bilibiliSaveCover by rememberSaveable { mutableStateOf(true) }
+    var bilibiliSaveDanmaku by rememberSaveable { mutableStateOf(false) }
+    var bilibiliSaveChapters by rememberSaveable { mutableStateOf(true) }
+    var bilibiliSaveInfo by rememberSaveable { mutableStateOf(true) }
     var downloadTreeUri by rememberSaveable { mutableStateOf("") }
     var savePathLabel by rememberSaveable { mutableStateOf(currentSavePath(context, "")) }
     var status by rememberSaveable { mutableStateOf("等待操作") }
@@ -130,6 +139,10 @@ fun HomeScreen(
     var previewContent by rememberSaveable { mutableStateOf("") }
     var previewStatus by rememberSaveable { mutableStateOf("等待加载") }
     var previewReturnScreen by rememberSaveable { mutableStateOf("home") }
+    var playbackUrl by rememberSaveable { mutableStateOf("") }
+    var bilibiliPages by remember { mutableStateOf<BilibiliPageCollection?>(null) }
+    var selectedBilibiliPage by rememberSaveable { mutableIntStateOf(1) }
+    var bilibiliCookie by remember { mutableStateOf(BilibiliCookieStore.load(context)) }
     var nextItemId by rememberSaveable { mutableIntStateOf(2) }
     val downloadItems = remember { mutableStateListOf(DownloadItem(1)) }
     var profiles by remember { mutableStateOf(ProfileStore.load(context)) }
@@ -140,9 +153,11 @@ fun HomeScreen(
     val streamBilibiliCompatActive = streamBilibiliCompatEnabled || isBilibiliUrl(url)
     val downloadBilibiliCompatActive = downloadBilibiliCompatEnabled || downloadItems.any { isBilibiliUrl(it.url) }
 
-    LaunchedEffect(url, referer, streamBilibiliCompatEnabled) {
+    LaunchedEffect(url, referer, streamBilibiliCompatEnabled, bilibiliCookie) {
         streamMediaInfo = null
         streamDetectedUrl = ""
+        bilibiliPages = null
+        playbackUrl = ""
         if (url.isBlank()) {
             streamDetectionStatus = "输入链接后等待 5 秒自动探测"
             return@LaunchedEffect
@@ -151,7 +166,11 @@ fun HomeScreen(
         delay(5000)
         streamDetectionStatus = "正在探测媒体类型"
         val info = withContext(Dispatchers.IO) {
-            MediaTypeDetector.detect(url, mediaRequestHeaders(referer, url, streamBilibiliCompatActive), bilibiliCompatEnabled = streamBilibiliCompatActive)
+            if (streamBilibiliCompatActive && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
+                MediaInfo(MediaKind.DASH, "bilibili-dash", "application/dash+xml")
+            } else {
+                MediaTypeDetector.detect(url, mediaRequestHeaders(referer, url, streamBilibiliCompatActive, bilibiliCookie), bilibiliCompatEnabled = streamBilibiliCompatActive)
+            }
         }
         streamMediaInfo = info
         streamDetectedUrl = url
@@ -159,13 +178,13 @@ fun HomeScreen(
     }
 
     val downloadDetectionKey = downloadItems.joinToString("|") { "${it.id}:${it.url}" }
-    LaunchedEffect(downloadDetectionKey, referer, downloadBilibiliCompatEnabled) {
+    LaunchedEffect(downloadDetectionKey, referer, downloadBilibiliCompatEnabled, bilibiliCookie) {
         delay(5000)
         downloadItems.filter { it.url.isNotBlank() && it.detectedUrl != it.url }.forEach { item ->
             updateDownloadItem(downloadItems, item.id) { it.copy(detectionStatus = "正在探测媒体类型") }
             val info = withContext(Dispatchers.IO) {
                 val bilibiliCompatActive = downloadBilibiliCompatEnabled || isBilibiliUrl(item.url)
-                MediaTypeDetector.detect(item.url, mediaRequestHeaders(referer, item.url, bilibiliCompatActive), bilibiliCompatEnabled = bilibiliCompatActive)
+                MediaTypeDetector.detect(item.url, mediaRequestHeaders(referer, item.url, bilibiliCompatActive, bilibiliCookie), bilibiliCompatEnabled = bilibiliCompatActive)
             }
             updateDownloadItem(downloadItems, item.id) {
                 it.copy(
@@ -179,7 +198,7 @@ fun HomeScreen(
 
     fun goBack() {
         screen = when (screen) {
-            "player" -> "stream"
+            "player" -> if (bilibiliPages?.pages.orEmpty().size > 1) "bilibiliPages" else "stream"
             "stream", "downloadMode", "settings" -> "home"
             "profiles", "about" -> "settings"
             "download" -> "downloadMode"
@@ -226,11 +245,45 @@ fun HomeScreen(
             try {
                 previewContent = fetchPlaylistText(
                     prepareBilibiliUrl(target, bilibiliCompat),
-                    mediaRequestHeaders(referer, target, bilibiliCompat),
+                    mediaRequestHeaders(referer, target, bilibiliCompat, bilibiliCookie),
                 )
                 previewStatus = "已加载 ${previewContent.lines().size} 行"
             } catch (exc: Exception) {
                 previewStatus = "加载失败：${exc.message ?: exc.javaClass.simpleName}"
+            }
+        }
+    }
+
+    fun pageUrl(source: String, page: Int): String {
+        val parsed = Uri.parse(source)
+        val builder = parsed.buildUpon().clearQuery()
+        parsed.queryParameterNames.filter { it != "p" }.forEach { name ->
+            parsed.getQueryParameters(name).forEach { value -> builder.appendQueryParameter(name, value) }
+        }
+        return builder.appendQueryParameter("p", page.toString()).build().toString()
+    }
+
+    fun startPlayback() {
+        if (!(streamBilibiliCompatActive && BilibiliStreamResolver.isBilibiliPageUrl(url))) {
+            playbackUrl = url
+            screen = "player"
+            return
+        }
+        scope.launch {
+            try {
+                val collection = withContext(Dispatchers.IO) {
+                    BilibiliStreamResolver.resolvePages(url, mediaRequestHeaders(referer, url, true, bilibiliCookie))
+                }
+                bilibiliPages = collection
+                selectedBilibiliPage = Uri.parse(url).getQueryParameter("p")?.toIntOrNull()?.coerceIn(1, collection.pages.size) ?: 1
+                if (collection.pages.size > 1) {
+                    screen = "bilibiliPages"
+                } else {
+                    playbackUrl = pageUrl(url, selectedBilibiliPage)
+                    screen = "player"
+                }
+            } catch (exc: Exception) {
+                status = "B 站页面解析失败：${exc.message ?: exc.javaClass.simpleName}"
             }
         }
     }
@@ -258,10 +311,12 @@ fun HomeScreen(
             { streamBilibiliCompatEnabled = it },
             streamKeywords,
             { streamKeywords = it },
+            bilibiliCookie,
+            { value -> bilibiliCookie = value; BilibiliCookieStore.save(context, value) },
             streamDetectionStatus,
             streamMediaInfo,
             streamDetectedUrl,
-            { screen = "player" },
+            { startPlayback() },
             { previewPlaylist(url, "stream", streamMediaInfo, streamDetectedUrl) },
             { goBack() },
         )
@@ -302,6 +357,20 @@ fun HomeScreen(
             onBilibiliCompatEnabledChange = { downloadBilibiliCompatEnabled = it },
             keywords = downloadKeywords,
             onKeywordsChange = { downloadKeywords = it },
+            bilibiliCookie = bilibiliCookie,
+            onBilibiliCookieChange = { value -> bilibiliCookie = value; BilibiliCookieStore.save(context, value) },
+            bilibiliQualityText = bilibiliQualityText,
+            onBilibiliQualityChange = { bilibiliQualityText = it.filter(Char::isDigit).take(3) },
+            bilibiliSaveSubtitles = bilibiliSaveSubtitles,
+            onBilibiliSaveSubtitlesChange = { bilibiliSaveSubtitles = it },
+            bilibiliSaveCover = bilibiliSaveCover,
+            onBilibiliSaveCoverChange = { bilibiliSaveCover = it },
+            bilibiliSaveDanmaku = bilibiliSaveDanmaku,
+            onBilibiliSaveDanmakuChange = { bilibiliSaveDanmaku = it },
+            bilibiliSaveChapters = bilibiliSaveChapters,
+            onBilibiliSaveChaptersChange = { bilibiliSaveChapters = it },
+            bilibiliSaveInfo = bilibiliSaveInfo,
+            onBilibiliSaveInfoChange = { bilibiliSaveInfo = it },
             threadText = threadText,
             onThreadTextChange = { value -> threadText = value.filter { it.isDigit() }.take(2) },
             savePath = savePathLabel,
@@ -327,7 +396,6 @@ fun HomeScreen(
                     }
                     try {
                         val manager = DownloadManager()
-                        val headers = mediaRequestHeaders(referer)
                         val batchCache = File(context.cacheDir, "segments/batch-${System.currentTimeMillis()}")
                         val threads = threadText.toIntOrNull()?.coerceIn(1, 64) ?: 8
                         val filterWords = if (downloadAdFilterEnabled) downloadKeywords.lines().filter { it.isNotBlank() } else emptyList()
@@ -339,7 +407,8 @@ fun HomeScreen(
                                 taskCache.deleteRecursively()
                                 finalOutput.parentFile?.mkdirs()
                                 val bilibiliCompatActive = downloadBilibiliCompatEnabled || isBilibiliUrl(item.url)
-                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads, item.mediaInfo, bilibiliCompatActive).collect { update ->
+                                val headers = mediaRequestHeaders(referer, item.url, bilibiliCompatActive, bilibiliCookie)
+                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads, item.mediaInfo, bilibiliCompatActive, bilibiliQualityText.toIntOrNull(), bilibiliSaveSubtitles, bilibiliSaveCover, bilibiliSaveDanmaku, bilibiliSaveChapters, bilibiliSaveInfo).collect { update ->
                                     status = "${index + 1}/${tasks.size} ${update.message}"
                                     progress = if (update.total == 0) 0f else update.done.toFloat() / update.total.toFloat()
                                 }
@@ -386,7 +455,19 @@ fun HomeScreen(
         )
         "about" -> AboutScreen(onBack = { goBack() })
         "playlistPreview" -> PlaylistPreviewScreen(previewUrl, previewContent, previewStatus, { goBack() })
-        "player" -> PlayerScreen(url, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, streamMediaInfo, streamBilibiliCompatActive, { goBack() })
+        "bilibiliPages" -> BilibiliPageSelectionScreen(
+            collection = bilibiliPages,
+            selectedPage = selectedBilibiliPage,
+            onPageChange = { selectedBilibiliPage = it },
+            onPlay = {
+                playbackUrl = pageUrl(url, selectedBilibiliPage)
+                screen = "player"
+            },
+            onBack = { goBack() },
+        )
+        "player" -> PlayerScreen(playbackUrl.ifBlank { url }, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, streamMediaInfo, streamBilibiliCompatActive, bilibiliCookie, {
+            if (bilibiliPages?.pages.orEmpty().size > 1) screen = "bilibiliPages" else goBack()
+        }, { goBack() })
         else -> DirectoryScreen(
             onStream = { screen = "stream" },
             onDownload = { screen = "downloadMode" },
@@ -460,7 +541,40 @@ private fun DownloadModeScreen(profiles: List<DownloadProfile>, selectedIndex: I
 }
 
 @Composable
-private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, detectionStatus: String, mediaInfo: MediaInfo?, detectedUrl: String, onPlay: () -> Unit, onPreview: () -> Unit, onBack: () -> Unit) {
+private fun BilibiliPageSelectionScreen(collection: BilibiliPageCollection?, selectedPage: Int, onPageChange: (Int) -> Unit, onPlay: () -> Unit, onBack: () -> Unit) {
+    val pages = collection?.pages.orEmpty()
+    FormScreen("选择 B 站分 P", onBack) {
+        Text(collection?.title.orEmpty(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        pages.forEach { page ->
+            ElevatedCard(onClick = { onPageChange(page.page) }, modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = selectedPage == page.page, onClick = { onPageChange(page.page) })
+                    Column {
+                        Text("P${page.page}  ${page.title.ifBlank { "未命名" }}", fontWeight = FontWeight.SemiBold)
+                        Text(formatDuration(page.durationMs), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        Button(onClick = onPlay, enabled = pages.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("播放所选分 P") }
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = (durationMs / 1000).coerceAtLeast(0)
+    return "%02d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+}
+
+@Composable
+private fun OptionSwitch(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label)
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, detectionStatus: String, mediaInfo: MediaInfo?, detectedUrl: String, onPlay: () -> Unit, onPreview: () -> Unit, onBack: () -> Unit) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     FormScreen("流播", onBack) {
         LabeledField("媒体地址") { OutlinedTextField(url, onUrlChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
@@ -468,6 +582,7 @@ private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: St
         AdvancedToggle(advancedExpanded) { advancedExpanded = it }
         if (advancedExpanded) {
             LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            LabeledField("B站 Cookie（加密保存）") { OutlinedTextField(bilibiliCookie, onBilibiliCookieChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
             BilibiliCompatSwitch(bilibiliCompatEnabled, onBilibiliCompatEnabledChange)
             FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
             if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
@@ -481,7 +596,7 @@ private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: St
 }
 
 @Composable
-private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
+private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, bilibiliQualityText: String, onBilibiliQualityChange: (String) -> Unit, bilibiliSaveSubtitles: Boolean, onBilibiliSaveSubtitlesChange: (Boolean) -> Unit, bilibiliSaveCover: Boolean, onBilibiliSaveCoverChange: (Boolean) -> Unit, bilibiliSaveDanmaku: Boolean, onBilibiliSaveDanmakuChange: (Boolean) -> Unit, bilibiliSaveChapters: Boolean, onBilibiliSaveChaptersChange: (Boolean) -> Unit, bilibiliSaveInfo: Boolean, onBilibiliSaveInfoChange: (Boolean) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     FormScreen("下载", onBack) {
         items.forEach { item ->
@@ -501,6 +616,13 @@ private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadIte
         AdvancedToggle(advancedExpanded) { advancedExpanded = it }
         if (advancedExpanded) {
             LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            LabeledField("B站 Cookie（加密保存）") { OutlinedTextField(bilibiliCookie, onBilibiliCookieChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            LabeledField("B站最高画质 ID，留空自动") { OutlinedTextField(bilibiliQualityText, onBilibiliQualityChange, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) }
+            OptionSwitch("下载并封装字幕", bilibiliSaveSubtitles, onBilibiliSaveSubtitlesChange)
+            OptionSwitch("保存封面", bilibiliSaveCover, onBilibiliSaveCoverChange)
+            OptionSwitch("保存弹幕 XML", bilibiliSaveDanmaku, onBilibiliSaveDanmakuChange)
+            OptionSwitch("写入章节", bilibiliSaveChapters, onBilibiliSaveChaptersChange)
+            OptionSwitch("保存信息 JSON", bilibiliSaveInfo, onBilibiliSaveInfoChange)
             BilibiliCompatSwitch(bilibiliCompatEnabled, onBilibiliCompatEnabledChange)
             FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
             if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }

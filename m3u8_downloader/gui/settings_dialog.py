@@ -53,6 +53,8 @@ class SettingsDialog(QDialog):
         headers = config.get("headers", {})
         self.referer = QLineEdit(headers.get("Referer", ""))
         self.user_agent = QLineEdit(headers.get("User-Agent", ""))
+        self.bilibili_cookie = QLineEdit(str(config.get("bilibili_cookie", "")))
+        self.bilibili_cookie.setEchoMode(QLineEdit.EchoMode.Password)
 
         self.keywords = QTextEdit("\n".join(config.get("filter_keywords", [])))
         self.keywords.setFixedHeight(96)
@@ -85,6 +87,7 @@ class SettingsDialog(QDialog):
         general_form.addRow("保存目录", save_dir_row)
         general_form.addRow("Referer", self.referer)
         general_form.addRow("User-Agent", self.user_agent)
+        general_form.addRow("B 站 Cookie", self.bilibili_cookie)
         general_form.addRow("过滤关键词", self.keywords)
 
         self.appearance_tab = QWidget()
@@ -119,6 +122,7 @@ class SettingsDialog(QDialog):
             "Referer": self.referer.text().strip(),
             "User-Agent": self.user_agent.text().strip(),
         }
+        config["bilibili_cookie"] = self.bilibili_cookie.text().strip()
         config["filter_keywords"] = [line.strip() for line in self.keywords.toPlainText().splitlines() if line.strip()]
         config["theme"] = self.theme.currentText()
         config["button_color"] = normalize_button_color(self.button_color.text())

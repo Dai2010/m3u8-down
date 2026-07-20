@@ -7,6 +7,21 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 object Merger {
+    suspend fun mergeBilibiliTracks(videoFile: File, audioFile: File?, outputFile: File): Boolean = withContext(Dispatchers.IO) {
+        require(videoFile.exists()) { "B 站视频轨道不存在" }
+        if (audioFile != null) require(audioFile.exists()) { "B 站音频轨道不存在" }
+        outputFile.parentFile?.mkdirs()
+        val command = mutableListOf("-y", "-i", videoFile.absolutePath)
+        if (audioFile != null) command += listOf("-i", audioFile.absolutePath)
+        command += listOf("-map", "0:v:0")
+        if (audioFile != null) command += listOf("-map", "1:a:0")
+        command += listOf("-c:v", "copy")
+        if (audioFile != null) command += listOf("-c:a", "copy")
+        command += outputFile.absolutePath
+        val session = FFmpegKit.executeWithArguments(command.toTypedArray())
+        ReturnCode.isSuccess(session.returnCode)
+    }
+
     suspend fun mergeTsFiles(tsFiles: List<File>, outputFile: File): Boolean = withContext(Dispatchers.IO) {
         require(tsFiles.isNotEmpty()) { "no ts files to merge" }
         outputFile.parentFile?.mkdirs()

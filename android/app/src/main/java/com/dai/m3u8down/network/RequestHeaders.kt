@@ -26,10 +26,11 @@ fun prepareBilibiliHeaders(url: String, headers: Map<String, String> = emptyMap(
     return output
 }
 
-fun mediaRequestHeaders(referer: String, url: String = "", bilibiliCompatEnabled: Boolean = false): Map<String, String> {
+fun mediaRequestHeaders(referer: String, url: String = "", bilibiliCompatEnabled: Boolean = false, cookie: String = ""): Map<String, String> {
     val base = buildMap {
         put("User-Agent", DEFAULT_USER_AGENT)
         if (referer.isNotBlank()) put("Referer", referer)
+        if (cookie.isNotBlank() && isBilibiliUrl(url)) put("Cookie", cookie)
     }
     return prepareBilibiliHeaders(url, base, bilibiliCompatEnabled)
 }

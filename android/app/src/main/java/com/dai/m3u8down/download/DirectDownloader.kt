@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.io.File
 
 class DirectDownloader(
@@ -14,27 +15,36 @@ class DirectDownloader(
     private val headers: Map<String, String> = emptyMap(),
     private val bilibiliCompatEnabled: Boolean = false,
 ) {
-    suspend fun download(url: String, outputFile: File): File = withContext(Dispatchers.IO) {
+    suspend fun download(url: String, outputFile: File, backupUrls: List<String> = emptyList(), retries: Int = 3): File = withContext(Dispatchers.IO) {
         outputFile.parentFile?.mkdirs()
         val part = File("${outputFile.absolutePath}.part")
-        try {
-            val enabled = bilibiliCompatEnabled || isBilibiliUrl(url)
-            val requestUrl = prepareBilibiliUrl(url, enabled)
-            val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, enabled)
-            val requestBuilder = Request.Builder().url(requestUrl)
-            requestHeaders.forEach { (name, value) -> if (value.isNotBlank()) requestBuilder.header(name, value) }
-            client.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) error("HTTP ${response.code}: $url")
-                response.body?.byteStream()?.use { input ->
-                    part.outputStream().use { output -> input.copyTo(output) }
-                } ?: error("empty response body: $url")
+        val sources = (listOf(url) + backupUrls).distinct()
+        var lastError: Throwable? = null
+        repeat(retries.coerceAtLeast(1)) {
+            for (source in sources) {
+                try {
+                    val enabled = bilibiliCompatEnabled || isBilibiliUrl(source)
+                    val requestUrl = prepareBilibiliUrl(source, enabled)
+                    val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, enabled).toMutableMap()
+                    val partSize = if (part.exists()) part.length() else 0L
+                    if (partSize > 0L) requestHeaders["Range"] = "bytes=$partSize-"
+                    val requestBuilder = Request.Builder().url(requestUrl)
+                    requestHeaders.forEach { (name, value) -> if (value.isNotBlank()) requestBuilder.header(name, value) }
+                    client.newCall(requestBuilder.build()).execute().use { response ->
+                        if (!response.isSuccessful) error("HTTP ${response.code}: $source")
+                        val append = partSize > 0L && response.code == 206
+                        response.body?.byteStream()?.use { input ->
+                            part.outputStream(append).use { output -> input.copyTo(output) }
+                        } ?: error("empty response body: $source")
+                    }
+                    if (outputFile.exists()) outputFile.delete()
+                    check(part.renameTo(outputFile)) { "cannot move downloaded file" }
+                    return@withContext outputFile
+                } catch (exc: Exception) {
+                    lastError = exc
+                }
             }
-            if (outputFile.exists()) outputFile.delete()
-            check(part.renameTo(outputFile)) { "cannot move downloaded file" }
-        } catch (exc: Exception) {
-            part.delete()
-            throw exc
         }
-        outputFile
+        throw lastError ?: IOException("download failed: $url")
     }
 }

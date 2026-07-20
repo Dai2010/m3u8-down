@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag, for example v4.2.5
+        description: Release tag, for example v5.0.0
         required: true
-        default: v4.2.5
+        default: v5.0.0
   push:
     tags:
       - "v*"
@@ -28,9 +28,10 @@ jobs:
           pip install -r requirements.txt
       - name: Run tests
         run: python -m pytest tests
+      - name: Compile Python sources
+        run: python -m compileall -q m3u8_downloader tests
 
   linux-android:
-    if: ${{ contains(github.event.inputs.tag || github.ref_name, 'windows-fix') == false }}
     needs: python-test
     runs-on: ubuntu-24.04
     steps:
@@ -104,12 +105,12 @@ jobs:
           cp "build/release/m3u8-downloader_${version}_amd64.deb" dist/
           cp "build/release/m3u8-downloader_${version}_termux_aarch64.deb" dist/
           sha256sum dist/* > dist/SHA256SUMS-linux-android.txt
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+      - name: Upload Linux and Android release artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          body_path: release-notes/${{ github.event.inputs.tag || github.ref_name }}.md
-          files: dist/*
+          name: release-linux-android
+          path: dist/*
+          if-no-files-found: error
 
   windows:
     needs: python-test
@@ -201,12 +202,53 @@ jobs:
         shell: bash
         run: |
           sha256sum "dist/m3u8-downloader-${ASSET_VERSION}-windows-x64.exe" "dist/m3u8-downloader-${ASSET_VERSION}-windows-x64.msi" > dist/SHA256SUMS-windows.txt
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          body_path: release-notes/${{ github.event.inputs.tag || github.ref_name }}.md
-          files: |
+          name: release-windows
+          path: |
             dist/m3u8-downloader-*-windows-x64.exe
             dist/m3u8-downloader-*-windows-x64.msi
             dist/SHA256SUMS-windows.txt
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - linux-android
+      - windows
+    if: ${{ !cancelled() && needs['linux-android'].result == 'success' && needs.windows.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Linux, Android and Termux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-linux-android
+          path: dist
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: dist
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          notes="release-notes/${tag}.md"
+          if [ -f "$notes" ]; then
+            cp "$notes" dist/RELEASE_NOTES.md
+          else
+            printf '# m3u8 Downloader %s\n\nAutomated multi-platform release.\n' "$tag" > dist/RELEASE_NOTES.md
+          fi
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: dist/RELEASE_NOTES.md
+          files: |
+            dist/*.apk
+            dist/*.deb
+            dist/*.exe
+            dist/*.msi
+            dist/SHA256SUMS-*.txt

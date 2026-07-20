@@ -20,7 +20,8 @@
 - GUI、TUI 和 Android 端支持配置文件管理，可新建、修改和删除过滤、线程、保存目录、标签和备注。
 - Android 端以“流播”“下载”和“设置”作为入口，支持在线播放、下载和统一设置管理。
 - 去广告过滤是可选功能，关闭时不会显示过滤关键词输入。
-- 自动识别 B 站链接并使用兼容请求方式；桌面 GUI 和 Android 的下载、流播页可在“高级”中手动开启“开启B站兼容模式”。
+- 支持 B 站普通视频页面、BV/AV/短链、多 P、画质、编码、音频语言、HDR、Cookie、字幕、封面、弹幕、章节和信息附件选项。
+- 桌面 CLI、GUI、TUI 和 Android 下载/流播页提供 B 站兼容模式；Android Cookie 使用加密存储。
 - Android 播放页面支持屏幕旋转时保留播放状态，系统返回手势会回到上一界面。
 - Release workflow 可产出 Android APK、Linux deb、Termux aarch64 deb、Windows exe 和 Windows msi。
 
@@ -63,6 +64,8 @@ python -m m3u8_downloader
 python -m m3u8_downloader "https://example.com/master.m3u8" -o video.mp4 --variant 0
 python -m m3u8_downloader "https://example.com/video.m3u8" -o video.mp4 --threads 16
 python -m m3u8_downloader "https://example.com/video.m3u8" -o video.mp4 --keyword /video/adjump/ --dump-filtered filtered.m3u8
+python -m m3u8_downloader "https://www.bilibili.com/video/BV..." -o video.mp4 --page 1 --quality 80 --video-codec avc --cookie 'SESSDATA=...'
+python -m m3u8_downloader "https://www.bilibili.com/video/BV..." -o downloads --all-pages --save-danmaku
 python -m m3u8_downloader --tui
 ```
 
@@ -108,14 +111,14 @@ Android APK 面向不依赖 GMS 的侧载安装场景，当前优先发布 `arm6
 - Target SDK: 35
 - 架构：`arm64-v8a`
 
-应用打开后分为“流播”“下载”和“设置”三个入口。下载和流播页的“高级”区域包含去广告过滤和“开启B站兼容模式”；B 站链接会自动启用兼容请求方式，隐藏或非标准链接也可以手动开启。设置页统一管理配置、外观和关于信息；配置管理会列出所有已有配置，点击配置即可编辑，右下角可新建配置。
+应用打开后分为“流播”“下载”和“设置”三个入口。下载和流播页的“高级”区域包含去广告过滤和“开启B站兼容模式”；B 站链接会自动使用兼容模式，特殊地址也可以手动开启。设置页统一管理配置、外观和关于信息；配置管理会列出所有已有配置，点击配置即可编辑，右下角可新建配置。
 
 ## Windows 端
 
 Windows 版本由 GitHub Actions Release workflow 在 `windows-latest` 上构建，产物包括：
 
-- `m3u8-downloader-4.2.5-windows-x64.exe`
-- `m3u8-downloader-4.2.5-windows-x64.msi`
+- `m3u8-downloader-5.0.0-windows-x64.exe`
+- `m3u8-downloader-5.0.0-windows-x64.msi`
 
 Windows `.exe` 安装器和 `.msi` 都会安装 GUI、CLI 和 TUI 三个入口，并把安装目录加入 PATH，PowerShell 中可直接运行：
 
@@ -156,10 +159,10 @@ ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8
 Linux deb 构建示例：
 
 ```bash
-packaging/linux/build_deb.sh 4.2.5
+packaging/linux/build_deb.sh 5.0.0
 ```
 
-所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64 和 Windows x64；发布 Windows、Android、Linux 和 Termux aarch64 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.5`。
+所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64、Termux aarch64 和 Windows x64；发布 Windows、Android、Linux 和 Termux aarch64 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v5.0.0`。
 
 Android 发布前必须配置以下 GitHub Actions secrets：`M3U8_ANDROID_KEYSTORE_BASE64`、`M3U8_ANDROID_STORE_PASSWORD`、`M3U8_ANDROID_KEY_ALIAS` 和 `M3U8_ANDROID_KEY_PASSWORD`。工作流会使用持久保存的 PKCS#12 发布密钥签名并校验证书指纹；缺少私钥或指纹不一致时直接失败，不上传不可升级的 APK。更换发布密钥后，旧证书签名的 APK 不能直接覆盖安装。
 
@@ -170,7 +173,9 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 当前发布资产包括：
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
-- `m3u8-downloader_4.2.5_amd64.deb`
-- `m3u8-downloader_4.2.5_termux_aarch64.deb`
-- `m3u8-downloader-4.2.5-windows-x64.exe`
-- `m3u8-downloader-4.2.5-windows-x64.msi`
+- `m3u8-downloader_5.0.0_amd64.deb`
+- `m3u8-downloader_5.0.0_termux_aarch64.deb`
+- `m3u8-downloader-5.0.0-windows-x64.exe`
+- `m3u8-downloader-5.0.0-windows-x64.msi`
+
+Linux deb 安装后可使用 `man m3u8-downloader` 查看完整 CLI 参数，包括 B 站下载选项。

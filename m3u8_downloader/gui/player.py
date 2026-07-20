@@ -130,7 +130,7 @@ class VlcPlayerWidget(QWidget):
         for name, value in (headers or {}).items():
             if not value:
                 continue
-            option_name = {"Referer": ":http-referrer", "User-Agent": ":http-user-agent"}.get(name)
+            option_name = _vlc_http_option(name)
             if option_name:
                 self._media.add_option(f"{option_name}={value}")
         self._player.set_media(self._media)
@@ -262,6 +262,8 @@ class VlcPlayerWidget(QWidget):
 
 
 def _configure_vlc_runtime() -> None:
+    global _VLC_DLL_DIRECTORY
+
     if not sys.platform.startswith("win"):
         return
     base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
@@ -273,9 +275,17 @@ def _configure_vlc_runtime() -> None:
         plugins = directory / "plugins"
         if plugins.exists():
             os.environ["VLC_PLUGIN_PATH"] = str(plugins)
-        if hasattr(os, "add_dll_directory"):
-            os.add_dll_directory(str(directory))
+        if hasattr(os, "add_dll_directory") and _VLC_DLL_DIRECTORY is None:
+            _VLC_DLL_DIRECTORY = os.add_dll_directory(str(directory))
         break
+
+
+def _vlc_http_option(header_name: str) -> str | None:
+    return {
+        "referer": ":http-referrer",
+        "user-agent": ":http-user-agent",
+        "cookie": ":http-cookie",
+    }.get(header_name.lower())
 
 
 def _format_time(milliseconds: int) -> str:
@@ -287,3 +297,6 @@ def _format_time(milliseconds: int) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     return f"{minutes:02d}:{seconds:02d}"
+
+
+_VLC_DLL_DIRECTORY = None

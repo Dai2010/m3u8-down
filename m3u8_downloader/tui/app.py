@@ -11,6 +11,16 @@ from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressB
 
 from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
 from ..config.theme import should_use_dark_theme
+from ..core.bilibili import (
+    BilibiliProvider,
+    BilibiliRequestConfig,
+    BilibiliRequestSession,
+    BilibiliSelectionPolicy,
+    build_bilibili_headers,
+    is_bilibili_url,
+    parse_bilibili_input,
+)
+from ..core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
 from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
@@ -80,6 +90,13 @@ class M3U8DownloaderTUI(App):
                     yield Input(placeholder="Media URL", id="url")
                     yield Button("立即探测（回车也可）", id="detect")
                     yield Input(value="", placeholder="Output path; blank uses URL extension", id="output")
+                    yield Input(value="", placeholder="B站分P编号；留空默认 P1", id="bilibili-page")
+                    yield Input(value="", placeholder="B站最高画质 ID；留空自动", id="bilibili-quality")
+                    yield Input(value="yes", placeholder="下载字幕 yes/no", id="bilibili-subtitles")
+                    yield Input(value="yes", placeholder="保存封面 yes/no", id="bilibili-cover")
+                    yield Input(value="no", placeholder="保存弹幕 yes/no", id="bilibili-danmaku")
+                    yield Input(value="yes", placeholder="写入章节 yes/no", id="bilibili-chapters")
+                    yield Input(value="yes", placeholder="保存信息 JSON yes/no", id="bilibili-info")
                     yield Input(value=self.config.get("headers", {}).get("Referer", ""), placeholder="Referer", id="referer")
                     yield Static("输入链接后自动探测", id="status")
                     yield ProgressBar(total=100, id="progress")
@@ -166,7 +183,10 @@ class M3U8DownloaderTUI(App):
         try:
             await asyncio.sleep(delay)
             self.query_one("#status", Static).update("正在探测媒体类型")
-            media_info = await asyncio.to_thread(detect_media_type, url, self._headers())
+            if is_bilibili_url(url) and parse_bilibili_input(url).kind == "video":
+                media_info = MediaInfo(MediaKind.DASH, "bilibili page", "application/dash+xml")
+            else:
+                media_info = await asyncio.to_thread(detect_media_type, url, self._headers(url))
             if self.query_one("#url", Input).value.strip() != url:
                 return
             self.detected_url = url
@@ -187,12 +207,15 @@ class M3U8DownloaderTUI(App):
         output = expand_path(output_text) if output_text else self._default_output_for_url(url)
         work_dir: Path | None = None
         try:
-            headers = self._headers()
+            headers = self._headers(url)
             if url != self.detected_url or self.detected_media_info is None:
                 self._write("请先完成媒体探测")
                 return
             media_info = self.detected_media_info
             self._write(f"Detected {media_info.display_name}")
+            if is_bilibili_url(url) and parse_bilibili_input(url).kind == "video":
+                await self._download_bilibili(url, output, headers)
+                return
             if media_info.kind == MediaKind.PROGRESSIVE:
                 self._write("Downloading direct media")
                 await asyncio.to_thread(download_direct_media, url, output, headers)
@@ -230,6 +253,44 @@ class M3U8DownloaderTUI(App):
             if work_dir and work_dir.exists():
                 shutil.rmtree(work_dir)
 
+    async def _download_bilibili(self, url: str, output: Path, headers: dict[str, str]) -> None:
+        try:
+            session = BilibiliRequestSession(BilibiliRequestConfig(headers=headers, cookie=headers.get("Cookie", "")))
+            provider = BilibiliProvider(session)
+            collection = await asyncio.to_thread(provider.describe, url)
+            page_text = self.query_one("#bilibili-page", Input).value.strip()
+            page = int(page_text) if page_text else 1
+            if page < 1 or page > len(collection.pages):
+                raise ValueError(f"分 P 编号必须在 1 到 {len(collection.pages)} 之间")
+            if len(collection.pages) > 1 and not page_text:
+                self._write("B 站多 P：")
+                self._write("；".join(f"P{item.page} {item.title}" for item in collection.pages))
+                self._write("未填写分 P，默认下载 P1")
+            quality_text = self.query_one("#bilibili-quality", Input).value.strip()
+            quality = int(quality_text) if quality_text else None
+            yes = {"1", "true", "yes", "y", "on", "是"}
+            options = BilibiliDownloadOptions(
+                selection=BilibiliSelectionPolicy(maximum_quality_id=quality),
+                threads=self._threads(),
+                save_subtitles=self.query_one("#bilibili-subtitles", Input).value.strip().lower() in yes,
+                save_cover=self.query_one("#bilibili-cover", Input).value.strip().lower() in yes,
+                save_danmaku=self.query_one("#bilibili-danmaku", Input).value.strip().lower() in yes,
+                save_chapters=self.query_one("#bilibili-chapters", Input).value.strip().lower() in yes,
+                save_info=self.query_one("#bilibili-info", Input).value.strip().lower() in yes,
+            )
+            manifest = await asyncio.to_thread(provider.resolve, url, page)
+            await asyncio.to_thread(
+                download_bilibili_manifest,
+                manifest,
+                output,
+                session,
+                options,
+                lambda done, total, message: self._write(message),
+            )
+            self._write(f"Saved {output}")
+        except Exception as exc:  # noqa: BLE001 - TUI displays concise failures.
+            self._write(f"B 站下载失败：{exc}")
+
     async def _start_proxy(self) -> None:
         url = self.query_one("#url", Input).value.strip()
         if not url:
@@ -241,7 +302,7 @@ class M3U8DownloaderTUI(App):
         if url != self.detected_url or self.detected_media_info is None:
             self._write("请先完成媒体探测")
             return
-        headers = self._headers()
+        headers = self._headers(url)
         media_info = self.detected_media_info
         self._write(f"Detected {media_info.display_name}")
         if media_info.kind != MediaKind.HLS:
@@ -266,8 +327,8 @@ class M3U8DownloaderTUI(App):
         await self._stop_proxy()
         self.exit()
 
-    def _headers(self) -> dict[str, str]:
-        headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
+    def _headers(self, url: str = "") -> dict[str, str]:
+        headers = build_bilibili_headers(self.config, url=url)
         referer = self.query_one("#referer", Input).value.strip()
         if referer:
             headers["Referer"] = referer

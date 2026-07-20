@@ -39,6 +39,7 @@ class ProxyServer:
         self._session = ClientSession(headers=self.headers)
         self._app = web.Application()
         self._app.router.add_get("/stream.m3u8", self._handle_stream)
+        self._app.router.add_get("/media", self._handle_media)
         self._app.router.add_get("/ts", self._handle_ts)
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
@@ -62,6 +63,9 @@ class ProxyServer:
     def get_stream_url(self, original_m3u8_url: str) -> str:
         return f"http://{self.host}:{self.port}/stream.m3u8?src={quote(original_m3u8_url, safe='')}"
 
+    def get_media_url(self, original_media_url: str) -> str:
+        return f"http://{self.host}:{self.port}/media?src={quote(original_media_url, safe='')}"
+
     async def _handle_stream(self, request: web.Request) -> web.Response:
         source = request.query.get("src")
         if not source:
@@ -79,6 +83,44 @@ class ProxyServer:
         else:
             text = self._proxy_media_playlist(content, request_url, playlist.segments)
         return web.Response(text=text, content_type="application/vnd.apple.mpegurl")
+
+    async def _handle_media(self, request: web.Request) -> web.StreamResponse:
+        source = request.query.get("src")
+        if not source:
+            raise web.HTTPBadRequest(text="missing src")
+        source = unquote(source)
+
+        headers = dict(self.headers)
+        for header_name in ("Range", "If-Range"):
+            header_value = request.headers.get(header_name)
+            if header_value:
+                headers[header_name] = header_value
+        request_url, request_headers = prepare_bilibili_request(source, headers, self.bilibili_compat)
+        session = self._require_session()
+        async with session.get(request_url, headers=request_headers) as upstream:
+            upstream.raise_for_status()
+            response_headers = {
+                name: upstream.headers[name]
+                for name in (
+                    "Accept-Ranges",
+                    "Cache-Control",
+                    "Content-Length",
+                    "Content-Range",
+                    "Content-Type",
+                    "ETag",
+                    "Last-Modified",
+                )
+                if name in upstream.headers
+            }
+            response = web.StreamResponse(status=upstream.status, headers=response_headers)
+            await response.prepare(request)
+            try:
+                async for chunk in upstream.content.iter_chunked(1024 * 256):
+                    await response.write(chunk)
+                await response.write_eof()
+            except (ConnectionResetError, asyncio.CancelledError):
+                raise
+            return response
 
     async def _handle_ts(self, request: web.Request) -> web.StreamResponse:
         source = request.query.get("src")

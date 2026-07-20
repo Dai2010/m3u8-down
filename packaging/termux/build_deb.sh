@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="${1:-4.2.5}"
+VERSION="${1:-5.0.0}"
 ARCHITECTURE="${TERMUX_DEB_ARCHITECTURE:-aarch64}"
 PACKAGE_ROOT="$ROOT/build/termux-deb-root"
 OUT_DIR="$ROOT/build/release"

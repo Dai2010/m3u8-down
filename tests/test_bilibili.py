@@ -1,4 +1,13 @@
-from m3u8_downloader.core.bilibili import is_bilibili_url, prepare_bilibili_request
+from m3u8_downloader.core.bilibili import (
+    BilibiliMediaManifest,
+    BilibiliPage,
+    BilibiliSelectionPolicy,
+    BilibiliTrack,
+    build_bilibili_headers,
+    is_bilibili_url,
+    parse_bilibili_input,
+    prepare_bilibili_request,
+)
 
 
 def test_bilibili_domain_detection_accepts_first_party_and_cdn_hosts():
@@ -35,3 +44,36 @@ def test_manual_bilibili_mode_adds_headers_without_rewriting_unrelated_urls():
 
     assert request_url == url
     assert headers == {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"}
+
+
+def test_bilibili_input_normalizes_short_and_page_url_kinds():
+    assert parse_bilibili_input("https://b23.tv/abc").kind == "short"
+    video = parse_bilibili_input("https://www.bilibili.com/video/BV1xx411c7mD?p=2")
+    assert video.kind == "video"
+    assert video.bvid == "BV1xx411c7mD"
+
+
+def test_config_cookie_is_added_to_bilibili_headers_without_overwriting_explicit_cookie():
+    headers = build_bilibili_headers({"bilibili_cookie": "SESSDATA=config"}, url="https://www.bilibili.com/video/BV1")
+    assert headers["Cookie"] == "SESSDATA=config"
+    explicit = build_bilibili_headers({"bilibili_cookie": "SESSDATA=config"}, {"Cookie": "SESSDATA=explicit"})
+    assert explicit["Cookie"] == "SESSDATA=explicit"
+
+
+def test_manifest_selection_uses_codec_policy_before_bandwidth():
+    avc = BilibiliTrack("https://video/avc", (), "video", quality_id=80, bandwidth=100)
+    hevc = BilibiliTrack("https://video/hevc", (), "video", quality_id=80, bandwidth=200, codec_id=12)
+    selected_page = BilibiliPage(1, "1", "", 0)
+    manifest = BilibiliMediaManifest(
+        source_url="https://www.bilibili.com/video/BV1",
+        input=parse_bilibili_input("https://www.bilibili.com/video/BV1"),
+        title="title",
+        description="",
+        cover_url="",
+        pages=(selected_page,),
+        selected_page=selected_page,
+        video_tracks=(avc, hevc),
+        audio_tracks=(),
+        subtitles=(),
+    )
+    assert manifest.select_video(BilibiliSelectionPolicy()).url == "https://video/avc"

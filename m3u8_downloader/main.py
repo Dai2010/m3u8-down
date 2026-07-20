@@ -9,7 +9,18 @@ from urllib.parse import urlparse
 import requests
 
 from .config.manager import load_config
-from .core.bilibili import is_bilibili_url, prepare_bilibili_request
+from .core.bilibili import (
+    BilibiliProvider,
+    BilibiliRequestConfig,
+    BilibiliRequestError,
+    BilibiliRequestSession,
+    BilibiliSelectionPolicy,
+    build_bilibili_headers,
+    is_bilibili_url,
+    parse_bilibili_input,
+    prepare_bilibili_request,
+)
+from .core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
 from .core.direct_downloader import download_direct_media
 from .core.downloader import Downloader
 from .core.ffmpeg_downloader import download_with_ffmpeg
@@ -27,6 +38,19 @@ def main() -> None:
     parser.add_argument("-o", "--output", default="", help="output media path")
     parser.add_argument("--work-dir", default="", help="directory used for downloaded ts segments")
     parser.add_argument("--header", action="append", default=[], help="HTTP header, e.g. 'Referer: https://example.com'")
+    parser.add_argument("--cookie", default="", help="B 站 Cookie，优先于配置文件中的 bilibili_cookie")
+    parser.add_argument("--page", type=int, default=None, help="B 站分 P 编号，从 1 开始")
+    parser.add_argument("--all-pages", action="store_true", help="下载 B 站视频的全部分 P")
+    parser.add_argument("--quality", type=int, default=None, help="B 站最高画质 ID，例如 80")
+    parser.add_argument("--video-codec", action="append", default=[], choices=["avc", "hevc", "av1"], help="B 站视频编码优先级，可重复指定")
+    parser.add_argument("--audio-language", default="", help="B 站音频语言代码")
+    parser.add_argument("--hdr", action="store_true", help="优先选择 HDR 视频轨道")
+    parser.add_argument("--no-subtitles", action="store_true", help="不下载或封装 B 站字幕")
+    parser.add_argument("--no-cover", action="store_true", help="不保存 B 站封面")
+    parser.add_argument("--save-danmaku", action="store_true", help="保存 B 站弹幕 XML")
+    parser.add_argument("--no-chapters", action="store_true", help="不写入 B 站章节")
+    parser.add_argument("--no-info", action="store_true", help="不保存 B 站信息 JSON")
+    parser.add_argument("--keep-bilibili-tracks", action="store_true", help="保留下载的视频/音频临时轨道")
     parser.add_argument("--keyword", action="append", default=[], help="ad segment keyword")
     parser.add_argument("--regex", action="store_true", help="treat keywords as regular expressions")
     parser.add_argument("--threads", type=int, default=0, help="download worker count")
@@ -41,14 +65,20 @@ def main() -> None:
         return
 
     config = load_config()
-    headers = {key: value for key, value in config["headers"].items() if value}
+    headers = build_bilibili_headers(config, url=args.url)
     headers.update(parse_headers(args.header))
+    if args.cookie and is_bilibili_url(args.url):
+        headers["Cookie"] = args.cookie
     keywords = args.keyword or config["filter_keywords"]
     threads = args.threads or int(config["threads"])
     output_path = args.output or _default_output_for_url(args.url)
     output = expand_path(output_path)
     bilibili_compat = bool(config.get("bilibili_compat", False)) or is_bilibili_url(args.url)
     request_url, request_headers = prepare_bilibili_request(args.url, headers, bilibili_compat)
+
+    if is_bilibili_url(args.url) and parse_bilibili_input(args.url).kind in {"video", "short", "episode", "season", "course", "collection", "series"}:
+        _download_bilibili_from_cli(args, config, headers)
+        return
 
     media_info = detect_media_type(args.url, headers, bilibili_compat=bilibili_compat)
     print(f"detected {media_info.display_name}")
@@ -112,6 +142,96 @@ def _launch_tui() -> None:
             "TUI dependencies are not installed; install requirements-desktop.txt or pass a URL to run CLI download."
         ) from exc
     tui_main()
+
+
+def _download_bilibili_from_cli(args, config: dict, headers: dict[str, str]) -> None:
+    input_kind = parse_bilibili_input(args.url).kind
+    if input_kind in {"episode", "season", "course"}:
+        raise SystemExit("番剧/课程下载未启用，请输入普通 BV/av 视频页面")
+    if input_kind in {"collection", "series"}:
+        raise SystemExit("合集批量下载暂未启用，请逐个输入 BV/av 视频页面")
+    session = BilibiliRequestSession(
+        BilibiliRequestConfig(
+            headers=headers,
+            cookie=str(headers.get("Cookie", "")),
+            retries=3,
+        ),
+    )
+    provider = BilibiliProvider(session)
+    try:
+        collection = provider.describe(args.url)
+        selected_pages = _select_bilibili_pages(collection.pages, args.page, args.all_pages)
+        require_ffmpeg()
+        codec_order = tuple(args.video_codec) or ("avc", "hevc", "av1")
+        options = BilibiliDownloadOptions(
+            selection=BilibiliSelectionPolicy(
+                video_codecs=codec_order,
+                maximum_quality_id=args.quality,
+                audio_language=args.audio_language,
+                prefer_hdr=args.hdr,
+            ),
+            threads=max(1, args.threads or int(config["threads"])),
+            retries=3,
+            save_subtitles=not args.no_subtitles,
+            save_cover=not args.no_cover,
+            save_danmaku=args.save_danmaku,
+            save_chapters=not args.no_chapters,
+            save_info=not args.no_info,
+            keep_intermediates=args.keep_bilibili_tracks,
+        )
+        for page_index in selected_pages:
+            page = collection.pages[page_index - 1]
+            output = _bilibili_output_path(args.output, collection.title, page.page, len(selected_pages))
+            print(f"正在下载 P{page.page}: {page.title or collection.title}")
+            manifest = provider.resolve(args.url, page=page.page)
+            download_bilibili_manifest(
+                manifest,
+                output,
+                session,
+                options,
+                progress_callback=lambda done, total, message: print(f"{message} ({done}/{total})"),
+            )
+            print(f"saved {output}")
+    except BilibiliRequestError as exc:
+        hint = "请检查 Cookie、Referer 或登录状态" if exc.category == "auth" else "请稍后重试并保留完整页面链接"
+        raise SystemExit(f"B 站请求失败：{exc}；{hint}") from exc
+    except Exception as exc:  # noqa: BLE001 - CLI presents one actionable error.
+        raise SystemExit(f"B 站下载失败：{exc}") from exc
+
+
+def _select_bilibili_pages(pages, requested_page: int | None, all_pages: bool) -> list[int]:
+    if requested_page is not None:
+        if requested_page < 1 or requested_page > len(pages):
+            raise ValueError(f"分 P 编号必须在 1 到 {len(pages)} 之间")
+        return [requested_page]
+    if all_pages or len(pages) == 1:
+        return [page.page for page in pages]
+    print("B 站页面包含多个分 P：")
+    for page in pages:
+        print(f"  {page.page}. {page.title or '未命名'}")
+    if not sys.stdin.isatty():
+        print("非交互终端默认选择 P1，可使用 --page 或 --all-pages 修改")
+        return [pages[0].page]
+    value = input("请选择分 P 编号（默认 1）：").strip()
+    selected = int(value or "1")
+    if selected < 1 or selected > len(pages):
+        raise ValueError(f"分 P 编号必须在 1 到 {len(pages)} 之间")
+    return [selected]
+
+
+def _bilibili_output_path(output: str, title: str, page: int, page_count: int) -> Path:
+    if output:
+        target = expand_path(output)
+        if page_count == 1 and target.suffix:
+            return target
+        target.mkdir(parents=True, exist_ok=True)
+        return target / f"{_safe_bilibili_name(title)}-P{page:02d}.mp4"
+    return Path(f"{_safe_bilibili_name(title)}-P{page:02d}.mp4")
+
+
+def _safe_bilibili_name(value: str) -> str:
+    cleaned = "".join(character if character not in '\\/:*?\"<>|' else "_" for character in value).strip(" .")
+    return cleaned or "bilibili-video"
 
 
 def _load_media_playlist(url: str, headers: dict[str, str], variant_index: int = -1, bilibili_compat: bool = False) -> Playlist:

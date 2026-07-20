@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -37,16 +38,23 @@ import androidx.core.view.WindowCompat
 import com.dai2010.m3u8down.media.MediaKind
 import com.dai2010.m3u8down.media.MediaInfo
 import com.dai2010.m3u8down.media.MediaTypeDetector
+import com.dai2010.m3u8down.network.BilibiliResolvedStream
+import com.dai2010.m3u8down.network.BilibiliFallbackDataSource
+import com.dai2010.m3u8down.network.BilibiliResolverException
+import com.dai2010.m3u8down.network.BilibiliStreamResolver
 import com.dai2010.m3u8down.network.mediaRequestHeaders
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
 import com.dai2010.m3u8down.parser.M3U8Parser
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -57,7 +65,7 @@ import java.net.URI
 
 @OptIn(UnstableApi::class)
 @Composable
-fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keywords: List<String>, detectedInfo: MediaInfo?, bilibiliCompatEnabled: Boolean, onBack: () -> Unit) {
+fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keywords: List<String>, detectedInfo: MediaInfo?, bilibiliCompatEnabled: Boolean, bilibiliCookie: String, onPlaybackCompleted: () -> Unit, onBack: () -> Unit) {
     val context = LocalContext.current
     DisposableEffect(Unit) {
         val activity = context as? Activity
@@ -92,36 +100,87 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     var mediaKind by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf(MediaKind.UNKNOWN.name) }
     var mediaContentType by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf("") }
     var status by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf("正在识别媒体类型") }
+    var bilibiliStream by remember(url, referer, bilibiliCompatEnabled) { mutableStateOf<BilibiliResolvedStream?>(null) }
 
     LaunchedEffect(url, referer, adFilterEnabled, keywords, detectedInfo, bilibiliCompatEnabled) {
         try {
-            val headers = mediaRequestHeaders(referer, url, bilibiliCompatEnabled)
+            val headers = mediaRequestHeaders(referer, url, bilibiliCompatEnabled, bilibiliCookie)
+            mediaUri = ""
+            bilibiliStream = null
+            if (bilibiliCompatEnabled && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
+                status = "正在解析 B 站 DASH M4S 轨道"
+                bilibiliStream = withContext(Dispatchers.IO) {
+                    BilibiliStreamResolver.resolvePage(url, headers)
+                }
+                mediaKind = MediaKind.DASH.name
+                mediaContentType = MimeTypes.APPLICATION_MPD
+                status = ""
+                return@LaunchedEffect
+            }
             val info = detectedInfo ?: withContext(Dispatchers.IO) { MediaTypeDetector.detect(url, headers, bilibiliCompatEnabled = bilibiliCompatEnabled) }
             mediaKind = info.kind.name
             mediaContentType = info.contentType
             status = "已识别：${info.kind.displayName}"
             mediaUri = if (adFilterEnabled && info.kind == MediaKind.HLS) {
                 status = "正在准备过滤播放列表"
-                withContext(Dispatchers.IO) { createFilteredPlaylist(context.cacheDir, url, referer, keywords, bilibiliCompatEnabled) }
+                withContext(Dispatchers.IO) { createFilteredPlaylist(context.cacheDir, url, referer, keywords, bilibiliCompatEnabled, bilibiliCookie) }
             } else {
                 prepareBilibiliUrl(url, bilibiliCompatEnabled)
             }
             status = ""
         } catch (exc: Exception) {
-            status = "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
+            status = if (exc is BilibiliResolverException && exc.category == "auth") {
+                "B站鉴权失败：请填写有效 Cookie，当前 URL 可能已过期"
+            } else {
+                "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
+            }
         }
     }
 
-    val player = remember(mediaUri, referer, mediaKind, mediaContentType, bilibiliCompatEnabled) {
-        if (mediaUri.isBlank()) return@remember null
-        val httpFactory = DefaultHttpDataSource.Factory()
-        httpFactory.setDefaultRequestProperties(mediaRequestHeaders(referer, url, bilibiliCompatEnabled))
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
-        val kind = runCatching { MediaKind.valueOf(mediaKind) }.getOrDefault(MediaKind.UNKNOWN)
-        val item = MediaItem.Builder().setUri(mediaUri).setMimeType(MediaInfo(kind, contentType = mediaContentType).mimeType(mediaUri)).build()
-        val mediaSource = DefaultMediaSourceFactory(dataSourceFactory).createMediaSource(item)
+    val player = remember(mediaUri, bilibiliStream, referer, mediaKind, mediaContentType, bilibiliCompatEnabled, bilibiliCookie) {
+        if (mediaUri.isBlank() && bilibiliStream == null) return@remember null
+        val requestHeaders = mediaRequestHeaders(referer, url, bilibiliCompatEnabled, bilibiliCookie)
+        val dataSourceFactory: DataSource.Factory = if (bilibiliStream != null) {
+            val stream = bilibiliStream
+            BilibiliFallbackDataSource.Factory(
+                requestHeaders,
+                buildMap {
+                    put(stream.video.url, stream.video.backupUrls)
+                    stream.audio?.let { put(it.url, it.backupUrls) }
+                },
+            )
+        } else {
+            val httpFactory = DefaultHttpDataSource.Factory()
+            httpFactory.setDefaultRequestProperties(requestHeaders)
+            DefaultDataSource.Factory(context, httpFactory)
+        }
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         ExoPlayer.Builder(context).build().apply {
-            setMediaSource(mediaSource)
+            if (bilibiliStream != null) {
+                val videoItem = MediaItem.Builder()
+                    .setUri(bilibiliStream.video.url)
+                    .setMimeType(MimeTypes.VIDEO_MP4)
+                    .build()
+                val videoSource = mediaSourceFactory.createMediaSource(videoItem)
+                val audio = bilibiliStream.audio
+                if (audio == null) {
+                    setMediaSource(videoSource)
+                } else {
+                    val audioItem = MediaItem.Builder()
+                        .setUri(audio.url)
+                        .setMimeType(MimeTypes.AUDIO_MP4)
+                        .build()
+                    val audioSource = mediaSourceFactory.createMediaSource(audioItem)
+                    setMediaSource(MergingMediaSource(videoSource, audioSource))
+                }
+            } else {
+                val kind = runCatching { MediaKind.valueOf(mediaKind) }.getOrDefault(MediaKind.UNKNOWN)
+                val item = MediaItem.Builder()
+                    .setUri(mediaUri)
+                    .setMimeType(MediaInfo(kind, contentType = mediaContentType).mimeType(mediaUri))
+                    .build()
+                setMediaSource(mediaSourceFactory.createMediaSource(item))
+            }
             prepare()
             seekTo(playbackPosition)
             playWhenReady = shouldPlay
@@ -135,6 +194,21 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
                 player.release()
             }
         }
+    }
+    val latestOnPlaybackCompleted = rememberUpdatedState(onPlaybackCompleted)
+    DisposableEffect(player) {
+        if (player == null) return@DisposableEffect onDispose { }
+        var reported = false
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (!reported && playbackState == Player.STATE_ENDED) {
+                    reported = true
+                    latestOnPlaybackCompleted.value()
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -156,10 +230,10 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     }
 }
 
-private fun createFilteredPlaylist(cacheDir: File, url: String, referer: String, keywords: List<String>, bilibiliCompatEnabled: Boolean): String {
+private fun createFilteredPlaylist(cacheDir: File, url: String, referer: String, keywords: List<String>, bilibiliCompatEnabled: Boolean, bilibiliCookie: String): String {
     val client = OkHttpClient()
     val requestUrl = prepareBilibiliUrl(url, bilibiliCompatEnabled)
-    val headers = mediaRequestHeaders(referer, url, bilibiliCompatEnabled)
+    val headers = mediaRequestHeaders(referer, url, bilibiliCompatEnabled, bilibiliCookie)
     fun fetchText(target: String): String {
         val requestTarget = prepareBilibiliUrl(target, bilibiliCompatEnabled)
         val builder = Request.Builder().url(requestTarget)

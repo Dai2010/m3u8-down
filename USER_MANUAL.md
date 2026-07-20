@@ -1,103 +1,17 @@
 # m3u8-downloader 使用手册
 
-版本：`4.2.5`
+版本：`5.0.0`
 
-本工具用于下载、合并和流播 HLS/m3u8、DASH/mpd、Smooth Streaming、RTSP 以及常见直链媒体。B 站兼容模式只负责请求已经拿到的媒体地址，不负责解析 BV 页面、调用 B 站接口或选择音视频流。
+本工具用于下载、合并和流播 HLS/m3u8、DASH/mpd、Smooth Streaming、RTSP 以及常见直链媒体，也支持 B 站普通视频页面下载。
 
 请只处理自己拥有权利或获得合法授权的内容，并遵守平台规则。
 
-## 一、最重要：B 站应该使用什么链接
+## 一、B 站地址与兼容模式
 
-### 1. “最终媒体地址”是什么
+CLI、GUI、TUI 和 Android 支持普通 B 站视频页面、BV/AV 地址及多 P 视频。
+请使用自己有权访问的内容，并避免在公开场合粘贴包含个人凭据的完整地址。
 
-“最终媒体地址”是播放器真正拿来读取媒体数据的 URL。它直接返回以下内容之一：
-
-- HLS 播放列表文本，响应内容通常以 `#EXTM3U` 开头，地址一般包含 `.m3u8`。
-- DASH 播放列表文本，地址一般包含 `.mpd`，响应内容是 MPD/XML。
-- 视频或音频媒体字节，地址一般包含 `.m4s`、`.mp4`、`.ts`、`.mp3` 等。
-
-它不是视频网页地址，也不是返回 HTML 或 JSON 的接口地址。判断方法是：把地址交给播放器或本工具后，服务器直接返回播放列表或媒体数据，而不是先返回一个网页。
-
-### 2. 可用地址示例
-
-以下地址是格式示例，域名、文件名和查询参数均为演示内容，不保证可以访问。
-
-**普通 HLS 播放列表，优先推荐：**
-
-```text
-https://cdn.example.net/live/channel/master.m3u8?token=demo-token&expires=1893456000
-```
-
-**B 站签名视频分片地址：**
-
-```text
-https://xy123.bilivideo.com/upgcxcode/00/00/00/video-30280.m4s?deadline=1893456000&platform=pc&trid=demo-trid&upsig=demo-signature
-```
-
-**B 站带端口的 mcdn 地址：**
-
-```text
-https://xy123.mcdn.bilivideo.cn:443/upgcxcode/00/00/00/video-30280.m4s?deadline=1893456000&trid=demo-trid&upsig=demo-signature
-```
-
-**普通直接媒体地址：**
-
-```text
-https://media.example.net/video/movie.mp4?token=demo-token
-```
-
-B 站真实地址通常会包含很长的签名查询参数。复制时必须保留完整的 `?`、`&`、`deadline`、`trid`、`upsig` 等参数；不要只复制到 `.m4s` 或 `.m3u8` 为止。
-
-### 3. 不可直接使用的地址示例
-
-下面这些是页面或 API 地址，不是本工具需要的最终媒体地址：
-
-```text
-https://www.bilibili.com/video/BV1xx411c7mD
-https://www.bilibili.com/video/av123456789
-https://www.bilibili.com/bangumi/play/ep123456
-https://www.bilibili.com/bangumi/play/ss12345
-https://api.bilibili.com/x/player/wbi/playurl?... 
-```
-
-部分专用 B 站下载工具可以接收 BV、av、ep、ss 页面标识，并通过 B 站接口继续解析；`m3u8-downloader` 不具备这层页面解析能力。因此，把 BV 页面直接粘贴进本工具时，通常会出现媒体类型未知、返回 HTML 或请求失败。
-
-### 4. 如何取得最终媒体地址
-
-以浏览器为例：
-
-1. 打开有权访问的视频页面并开始播放。
-2. 打开开发者工具的 `Network`/“网络”面板。
-3. 使用筛选词 `m3u8`、`m4s` 或 `media`。
-4. 找到响应内容为 `#EXTM3U`、MPD/XML 或媒体字节的请求。
-5. 选择“复制链接地址”或“Copy URL”。
-6. 粘贴到本工具，并保留完整查询参数。
-
-如果同时看到视频 `.m4s` 和音频 `.m4s`，它们是两个独立的流。本工具可以下载你提供的单个媒体地址，但不会根据 BV 页面自动获取、选择并混合 B 站独立的视频流和音频流。需要完整成片时，优先寻找可直接播放的 HLS/m3u8 或已经包含音视频的媒体地址。
-
-签名地址通常会过期。遇到 `403` 时，重新播放页面并复制新地址；不要把真实签名 URL 写进 README、Issue、日志或截图。
-
-## 二、B 站兼容模式怎么用
-
-### 自动模式
-
-地址的主机名属于以下域名时，程序自动启用兼容请求：
-
-- `bilibili.com`、`bilibili.tv`
-- `bilivideo.com`、`bilivideo.cn`
-- 上述域名的子域名
-
-兼容层采用常见的 B 站 CDN 请求策略：
-
-- 默认补充 `User-Agent: Mozilla/5.0`。
-- 默认补充 `Referer: https://www.bilibili.com`。
-- 保留配置中的 `Cookie` 等请求头。
-- 桌面 CLI/TUI 在需要时可对 B 站 CDN 执行 HTTP 兼容替换。
-- Android 始终保留 CDN 的 HTTPS；这是 Android 网络安全策略要求，不能使用明文 HTTP。
-- 带端口的 `.mcdn.bilivideo.cn:<port>` 地址在所有平台保留 HTTPS。
-- 下载失败日志只显示不带查询参数的 URL，避免把签名完整写入错误信息。
-
-### 手动模式
+标准地址会自动启用兼容模式；非标准地址可以手动打开兼容模式。
 
 桌面 GUI 和 Android 的“下载”“流播”页面都有“高级”区域，开关名称固定为：
 
@@ -107,15 +21,14 @@ https://api.bilibili.com/x/player/wbi/playurl?...
 
 标准 B 站域名会自动生效，通常不需要手动打开。以下情况可以手动打开：
 
-- 地址已经被代理改写，主机名不再是 B 站域名。
-- CDN 使用了隐藏或非标准域名，但你确认它是 B 站媒体地址。
-- 自动探测失败，需要强制使用 B 站请求头。
+- 地址来源特殊，自动识别没有生效。
+- 自动探测失败，需要手动尝试兼容模式。
 
 Android 页面中的开关显示实际生效状态：当前输入或下载列表包含标准 B 站地址时，即使没有手动点击，开关也会显示为开启；普通地址则只显示手动设置的状态。
 
-手动模式不会把任意第三方地址强行变成 B 站媒体，也不会把 BV 页面解析成媒体地址。
+兼容模式不会改变普通第三方地址的处理方式。
 
-## 三、桌面 CLI
+## 二、桌面 CLI
 
 ### 安装与启动
 
@@ -132,23 +45,36 @@ python -m m3u8_downloader --help
 python -m m3u8_downloader "https://cdn.example.net/video/index.m3u8" -o video.mp4
 ```
 
-B 站媒体地址建议放在引号中，避免签名 URL 中的 `&` 被 Shell 当成命令分隔符：
+B 站地址建议放在引号中，避免其中的特殊字符被 Shell 当成命令分隔符：
 
 ```bash
-export BILIBILI_MEDIA_URL='粘贴完整的B站.m3u8或.m4s地址'
+export BILIBILI_MEDIA_URL='粘贴完整的 B 站媒体地址'
 python -m m3u8_downloader "$BILIBILI_MEDIA_URL" -o bilibili-video.mp4
 ```
 
-环境变量示例中的值只应在本机临时使用，不要把真实签名地址提交到仓库。
+环境变量示例中的值只应在本机临时使用，不要把真实 Cookie 或个人地址提交到仓库。
 
 ### CLI 参数
 
 | 参数 | 用法 |
 | --- | --- |
-| `url` | 媒体 URL；省略时进入 TUI。接收最终媒体地址，不接收 BV 页面。 |
+| `url` | 媒体 URL 或 B 站普通视频页面；省略时进入 TUI。 |
 | `-o`、`--output` | 输出文件路径；省略时根据 URL 扩展名生成文件名，播放列表默认输出 `video.mp4`。 |
 | `--work-dir` | 指定 HLS 分片工作目录。指定后目录不会由程序自动删除，便于排查分片问题。 |
 | `--header` | 增加请求头，可重复使用，例如 `--header 'Cookie: SESSDATA=...'`。命令行值覆盖同名配置。 |
+| `--cookie` | B 站 Cookie；优先于配置文件中的 `bilibili_cookie`。 |
+| `--page` | 指定 B 站分 P 编号，从 `1` 开始；未指定时交互选择，非交互运行默认选择 P1。 |
+| `--all-pages` | 下载普通 B 站视频的全部分 P；输出目录中按分 P 生成文件。 |
+| `--quality` | B 站最高画质 ID，例如 `80`；不传时自动选择。 |
+| `--video-codec` | 视频编码优先级，可重复指定 `avc`、`hevc` 或 `av1`；不传时为 AVC、HEVC、AV1。 |
+| `--audio-language` | B 站音频语言代码；不传时自动选择。 |
+| `--hdr` | 有可用资源时优先选择 HDR。 |
+| `--no-subtitles` | 不保存或封装字幕。 |
+| `--no-cover` | 不保存封面。 |
+| `--save-danmaku` | 保存弹幕 XML。 |
+| `--no-chapters` | 不写入章节。 |
+| `--no-info` | 不保存信息 JSON。 |
+| `--keep-bilibili-tracks` | 保留 B 站下载过程中产生的临时视频、音频文件。 |
 | `--keyword` | HLS 去广告关键词，可重复使用；匹配分片 URL 或标题。没有传入时使用配置文件关键词。 |
 | `--regex` | 把 `--keyword` 当作正则表达式；只影响 HLS 去广告。 |
 | `--threads` | HLS 分片并发线程数；不传时使用配置值。 |
@@ -168,7 +94,7 @@ python -m m3u8_downloader "https://cdn.example.net/video/index.m3u8" -o video.mp
   --header 'Referer: https://example.com' --header 'Cookie: session=local-only'
 ```
 
-桌面 CLI 对 B 站地址自动兼容。需要对隐藏 CDN 地址强制开启时，在配置文件中设置：
+桌面 CLI 对 B 站地址自动兼容。需要对非标准地址强制开启时，在配置文件中设置：
 
 ```json
 {
@@ -176,7 +102,7 @@ python -m m3u8_downloader "https://cdn.example.net/video/index.m3u8" -o video.mp
 }
 ```
 
-配置文件位置见“配置文件”一节。该字段只改变请求策略，仍然要求输入真正的媒体 URL。
+配置文件位置见“配置文件”一节。
 
 ## 四、桌面 GUI
 
@@ -203,7 +129,7 @@ python -m m3u8_downloader.gui.app
 流播页高级选项：
 
 - `Referer，可留空`：站点要求来源页时填写。
-- `开启B站兼容模式`：强制使用 B 站请求策略。
+- `开启B站兼容模式`：手动启用 B 站兼容模式。
 - `启用去广告过滤`：只对 HLS 播放列表过滤分片。
 - `过滤关键词，每行一个`：打开去广告后显示；匹配分片 URL 或标题。
 
@@ -231,7 +157,7 @@ python -m m3u8_downloader.gui.app
 - `线程数`：默认下载线程数。
 - `保存目录`：默认输出目录。
 - `Referer`：全局来源页请求头。
-- `User-Agent`：全局用户代理；B 站兼容模式只在未填写时补充 `Mozilla/5.0`。
+- `User-Agent`：全局用户代理。
 - `过滤关键词`：每行一个，作为默认 HLS 去广告关键词。
 
 **外观**
@@ -267,7 +193,8 @@ TUI 提供：
 - 下载、配置和日志分为独立页面，每个页面都支持上下滑动，适合 Termux 的竖屏和小屏终端。
 - `q` 退出，并在退出时停止代理。
 
-TUI 对标准 B 站 CDN 地址会自动识别并使用兼容请求，但没有单独的 `开启B站兼容模式` 可视开关；隐藏 CDN 地址请改用 GUI、Android 或 CLI 配置。
+TUI 会自动识别标准 B 站地址，但没有单独的 `开启B站兼容模式` 可视开关；需要手动
+设置时请改用 GUI、Android 或 CLI 配置。
 
 ### Termux
 
@@ -354,6 +281,7 @@ $XDG_CONFIG_HOME/m3u8-downloader/config.json
     "Referer": "",
     "User-Agent": "Mozilla/5.0"
   },
+  "bilibili_cookie": "",
   "filter_keywords": ["/video/adjump/"],
   "bilibili_compat": false,
   "proxy_port": 8888,
@@ -362,37 +290,59 @@ $XDG_CONFIG_HOME/m3u8-downloader/config.json
 }
 ```
 
-不要在配置文件、日志或仓库中保存真实 `Cookie`、签名 URL、访问令牌或媒体文件。
+桌面 GUI 的“常规”设置和 CLI 的 `--cookie` 都会写入或注入 `bilibili_cookie`；Cookie 仅用于 B 站请求，不会自动发送到其他站点。不要在配置文件、日志或仓库中保存真实 `Cookie`、访问令牌或媒体文件。
 
-## 九、B 站页面解析边界
+## 九、B 站 CLI 下载
 
-本应用只处理已经取得的媒体地址，产品定位与从页面开始解析的专用 B 站下载工具不同：
+CLI 支持普通 BV/av 视频页面和多 P 视频。番剧、课程、合集和系列地址会给出明确的
+不支持提示。需要登录权限的内容可以使用 `--cookie`，也可以在配置文件中保存
+`bilibili_cookie`。
 
-- 专用 B 站下载工具：可以从 BV、av、ep、ss 等页面标识开始，通过 B 站 API 获取信息，并提供分P、画质、编码、音频、视频、字幕、弹幕、封面、账号登录和混流选项。
-- 本应用：从最终 m3u8、mpd、m4s、mp4 等媒体地址开始，提供媒体探测、HLS 分片下载、去广告、断点续传、FFmpeg 合并、流播代理和跨平台界面。
+### 参数速查
 
-因此，B 站页面链接的正确工作流是：
+| 参数 | 说明 |
+| --- | --- |
+| `--cookie COOKIE` | 指定 B 站 Cookie，优先于配置文件。 |
+| `--page PAGE` | 下载指定分 P，编号从 `1` 开始。 |
+| `--all-pages` | 下载全部分 P；`--output` 应指定目录。 |
+| `--quality QUALITY` | 设置最高画质 ID，例如 `80`。 |
+| `--video-codec CODEC` | 设置编码优先级，可重复使用 `avc`、`hevc`、`av1`。 |
+| `--audio-language LANGUAGE` | 设置音频语言代码。 |
+| `--hdr` | 优先选择 HDR。 |
+| `--no-subtitles` | 不保存或封装字幕。 |
+| `--no-cover` | 不保存封面。 |
+| `--save-danmaku` | 保存弹幕 XML。 |
+| `--no-chapters` | 不写入章节。 |
+| `--no-info` | 不保存信息 JSON。 |
+| `--keep-bilibili-tracks` | 保留下载过程中的临时视频、音频文件。 |
 
-```text
-B站视频页面 → 浏览器网络面板 → 复制最终 m3u8/m4s 媒体地址 → 粘贴到本应用
+### 示例
+
+```bash
+python -m m3u8_downloader "https://www.bilibili.com/video/BV..." \
+  --cookie 'SESSDATA=...' --page 2 --quality 80 --video-codec avc \
+  --output lesson.mp4
+
+python -m m3u8_downloader "https://www.bilibili.com/video/BV..." \
+  --all-pages --save-danmaku --output ./downloads
+
+python -m m3u8_downloader "https://www.bilibili.com/video/BV..." \
+  --video-codec hevc --video-codec avc --no-subtitles --no-cover \
+  --no-chapters --no-info
 ```
 
-不要把下面两类地址混用：
-
-```text
-专用 B 站下载工具输入：B站页面/BV/av/ep/ss
-m3u8-downloader 输入：页面解析后得到的最终媒体地址
-```
+未指定 `--page` 或 `--all-pages` 时，交互终端会显示分 P 选择；非交互终端默认选择
+P1。GUI 和 TUI 提供对应的分 P、画质、附件和 Cookie 设置。
 
 ## 十、常见问题
 
 ### 提示媒体类型未知
 
-确认粘贴的是最终媒体地址；等待约 1 秒探测，或点击“立即探测”；检查地址是否过期；必要时填写 Referer；B 站非标准 CDN 可以打开 `开启B站兼容模式`。
+确认链接仍然有效；等待约 1 秒探测，或点击“立即探测”；必要时填写 Referer；B 站非标准地址可以打开 `开启B站兼容模式`。
 
 ### B 站返回 403
 
-重新从正在播放的页面复制完整签名 URL，不要删掉查询参数。确认没有把 BV 页面、API JSON 地址或已经过期的 `.m4s` 地址粘贴进来。B 站 CDN 地址可尝试兼容模式，但兼容模式不能刷新过期签名。
+确认链接仍然有效，并检查 Cookie 是否有权访问该内容；必要时重新输入页面地址或更新 Cookie，再尝试 `开启B站兼容模式`。
 
 ### m3u8 预览按钮不可用
 

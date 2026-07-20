@@ -5,6 +5,7 @@ import com.dai2010.m3u8down.media.MediaInfo
 import com.dai2010.m3u8down.media.MediaKind
 import com.dai2010.m3u8down.media.MediaTypeDetector
 import com.dai2010.m3u8down.network.isBilibiliUrl
+import com.dai2010.m3u8down.network.BilibiliStreamResolver
 import com.dai2010.m3u8down.network.prepareBilibiliHeaders
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
 import com.dai2010.m3u8down.parser.M3U8Parser
@@ -34,6 +35,12 @@ class DownloadManager(
         concurrency: Int = 8,
         detectedInfo: MediaInfo? = null,
         bilibiliCompatEnabled: Boolean = false,
+        bilibiliQualityId: Int? = null,
+        bilibiliSaveSubtitles: Boolean = true,
+        bilibiliSaveCover: Boolean = true,
+        bilibiliSaveDanmaku: Boolean = false,
+        bilibiliSaveChapters: Boolean = true,
+        bilibiliSaveInfo: Boolean = true,
     ): Flow<DownloadProgress> = flow {
         val effectiveBilibiliCompat = bilibiliCompatEnabled || isBilibiliUrl(url)
         val requestUrl = prepareBilibiliUrl(url, effectiveBilibiliCompat)
@@ -41,6 +48,21 @@ class DownloadManager(
         emit(DownloadProgress(0, 0, "Detecting media type"))
         val mediaInfo = detectedInfo ?: MediaTypeDetector.detect(url, requestHeaders, client, effectiveBilibiliCompat)
         emit(DownloadProgress(0, 0, "Detected ${mediaInfo.kind.displayName}"))
+        if (effectiveBilibiliCompat && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
+            emit(DownloadProgress(0, 2, "解析 B 站页面和分 P"))
+            val stream = BilibiliStreamResolver.resolvePage(url, requestHeaders, client, bilibiliQualityId)
+            val videoFile = File(cacheDir, "bilibili-video.m4s")
+            val audioFile = stream.audio?.let { File(cacheDir, "bilibili-audio.m4s") }
+            DirectDownloader(client, requestHeaders, effectiveBilibiliCompat).download(stream.video.url, videoFile, stream.video.backupUrls)
+            emit(DownloadProgress(1, 2, "视频轨道下载完成"))
+            if (stream.audio != null && audioFile != null) {
+                DirectDownloader(client, requestHeaders, effectiveBilibiliCompat).download(stream.audio.url, audioFile, stream.audio.backupUrls)
+            }
+            emit(DownloadProgress(2, 2, "正在合并 B 站音视频"))
+            check(Merger.mergeBilibiliTracks(videoFile, audioFile, outputFile)) { "B 站音视频合并失败" }
+            emit(DownloadProgress(2, 2, "已保存 ${outputFile.absolutePath}"))
+            return@flow
+        }
         if (mediaInfo.kind == MediaKind.PROGRESSIVE) {
             emit(DownloadProgress(0, 1, "Downloading direct media"))
             DirectDownloader(client, requestHeaders, effectiveBilibiliCompat).download(requestUrl, outputFile)
