@@ -8,6 +8,9 @@ import okhttp3.Request
 import java.io.IOException
 import java.security.MessageDigest
 
+import com.dai2010.m3u8down.network.isBilibiliUrl
+import com.dai2010.m3u8down.network.prepareBilibiliHeaders
+
 data class BilibiliDashTrack(
     val url: String,
     val backupUrls: List<String>,

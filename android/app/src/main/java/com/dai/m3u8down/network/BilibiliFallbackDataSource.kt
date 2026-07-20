@@ -1,9 +1,9 @@
 package com.dai2010.m3u8down.network
 
 import android.net.Uri
-import androidx.media3.common.DataSpec
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import java.io.IOException
 
