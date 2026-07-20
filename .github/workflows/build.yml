@@ -48,13 +48,20 @@ jobs:
         env:
           CI_MAVEN_REPOS: official
         run: |
-          set -o pipefail
           log_file="$RUNNER_TEMP/android-gradle.log"
-          gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1 --stacktrace 2>&1 | tee "$log_file"
-          status=${PIPESTATUS[0]}
+          set +e
+          gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1 --stacktrace > "$log_file" 2>&1
+          status=$?
+          cat "$log_file"
           if [ "$status" -ne 0 ]; then
-            details="$(tail -n 120 "$log_file" | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
-            echo "::error title=Android Gradle failure::$details"
+            details="$(grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed|^> Task)' "$log_file" | tail -n 30 | paste -sd ' ' -)"
+            if [ -z "$details" ]; then
+              details="$(tail -n 20 "$log_file" | paste -sd ' ' -)"
+            fi
+            details="${details//'%'/'%25'}"
+            details="${details//$'\r'/'%0D'}"
+            details="${details//$'\n'/'%0A'}"
+            echo "::error file=android/app/build.gradle.kts,line=1,title=Android Gradle failure::$details"
             exit "$status"
           fi
       - name: Build Linux deb
