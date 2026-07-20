@@ -3,6 +3,7 @@ package com.dai2010.m3u8down.download
 import com.dai2010.m3u8down.network.isBilibiliUrl
 import com.dai2010.m3u8down.network.prepareBilibiliHeaders
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
+import com.dai2010.m3u8down.network.throttleBilibiliRequest
 import com.dai2010.m3u8down.parser.Segment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,6 +27,7 @@ class SegmentDownloader(
         val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, enabled)
         val requestBuilder = Request.Builder().url(requestUrl)
         requestHeaders.forEach { (name, value) -> if (value.isNotBlank()) requestBuilder.header(name, value) }
+        throttleBilibiliRequest(requestUrl)
         client.newCall(requestBuilder.build()).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}: ${segment.url}")
             response.body?.byteStream()?.use { input ->

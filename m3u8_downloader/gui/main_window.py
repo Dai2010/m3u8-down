@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..config.manager import load_config, load_profiles
+from ..config.manager import load_config, load_profiles, save_config
 from ..core.bilibili import (
     BilibiliProvider,
     BilibiliRequestConfig,
@@ -839,7 +839,9 @@ class MainWindow(QMainWindow):
 
     def _bilibili_login_completed(self, dialog: SettingsDialog, cookie: str) -> None:
         dialog.bilibili_cookie.setText(cookie)
-        dialog.set_bilibili_login_status("登录成功，保存设置后生效", enabled=True)
+        self.config["bilibili_cookie"] = cookie
+        save_config(self.config)
+        dialog.set_bilibili_login_status("登录成功，Cookie 已自动保存", enabled=True)
 
     def _bilibili_login_failed(self, dialog: SettingsDialog, message: str) -> None:
         dialog.set_bilibili_login_status(f"登录失败：{message}", enabled=True)

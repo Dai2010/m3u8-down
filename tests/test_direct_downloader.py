@@ -1,4 +1,4 @@
-from m3u8_downloader.core.direct_downloader import download_direct_media
+from m3u8_downloader.core.direct_downloader import DirectDownloadError, download_direct_media
 
 
 class FakeResponse:
@@ -49,3 +49,28 @@ def test_download_direct_media_resumes_existing_part_file(tmp_path, monkeypatch)
 
     assert output.read_bytes() == b"prefixsuffix"
     assert calls == [{"Range": "bytes=6-"}]
+
+
+def test_download_direct_media_stops_after_bilibili_rate_limit(tmp_path, monkeypatch):
+    output = tmp_path / "video.m4s"
+    calls = []
+
+    def fake_get(url, headers, stream, allow_redirects, timeout):
+        calls.append(url)
+        return FakeResponse(status_code=429)
+
+    monkeypatch.setattr("m3u8_downloader.core.direct_downloader.requests.get", fake_get)
+
+    try:
+        download_direct_media(
+            "https://video.bilivideo.com/video.m4s",
+            output,
+            retries=3,
+            backup_urls=("https://backup.bilivideo.com/video.m4s",),
+        )
+    except DirectDownloadError as exc:
+        assert exc.status_code == 429
+    else:
+        raise AssertionError("expected DirectDownloadError")
+
+    assert calls == ["http://video.bilivideo.com/video.m4s"]

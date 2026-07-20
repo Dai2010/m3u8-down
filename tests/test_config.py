@@ -1,3 +1,6 @@
+import os
+import stat
+
 from m3u8_downloader.config.manager import delete_profile, load_config, save_config, upsert_profile
 from m3u8_downloader.config.theme import normalize_button_color, normalize_theme, should_use_dark_theme
 
@@ -11,6 +14,15 @@ def test_load_config_merges_defaults(tmp_path):
     assert config["threads"] == 4
     assert config["headers"]["Referer"] == "https://example.com"
     assert "User-Agent" in config["headers"]
+
+
+def test_save_config_protects_cookie_file_permissions(tmp_path):
+    path = tmp_path / "config.json"
+
+    save_config({"bilibili_cookie": "SESSDATA=secret"}, path)
+
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_load_config_migrates_legacy_default_keywords(tmp_path):

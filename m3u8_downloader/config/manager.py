@@ -61,9 +61,20 @@ def save_config(config: dict[str, Any], path: Path | None = None) -> None:
     target = path or config_path()
     config = _normalize_config(_deep_merge(deepcopy(DEFAULT_CONFIG), config))
     target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8") as file_obj:
-        json.dump(config, file_obj, indent=2, ensure_ascii=False)
-        file_obj.write("\n")
+    temporary = target.with_name(f".{target.name}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as file_obj:
+            json.dump(config, file_obj, indent=2, ensure_ascii=False)
+            file_obj.write("\n")
+            file_obj.flush()
+            os.fsync(file_obj.fileno())
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def load_profiles(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:

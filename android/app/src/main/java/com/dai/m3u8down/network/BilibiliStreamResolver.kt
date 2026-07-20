@@ -44,6 +44,8 @@ data class BilibiliPageCollection(
 class BilibiliResolverException(
     val category: String,
     message: String,
+    val apiCode: Int? = null,
+    val httpStatus: Int? = null,
 ) : RuntimeException(message)
 
 object BilibiliStreamResolver {
@@ -140,7 +142,7 @@ object BilibiliStreamResolver {
             "support_multi_audio" to "true",
             "wts" to (System.currentTimeMillis() / 1000).toString(),
         )
-        if (requestHeaders.keys.none { it.equals("Cookie", ignoreCase = true) }) {
+        if (requestHeaders.none { (name, value) -> name.equals("Cookie", ignoreCase = true) && value.isNotBlank() }) {
             playParams["try_look"] = "1"
         }
         val unsignedQuery = buildQuery(playParams)
@@ -247,27 +249,31 @@ object BilibiliStreamResolver {
             try {
                 val builder = Request.Builder().url(url)
                 headers.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
+                throttleBilibiliRequest(url)
                 client.newCall(builder.build()).execute().use { response ->
                     if (!response.isSuccessful) {
-                        val category = if (response.code == 401 || response.code == 403) "auth" else "http"
-                        throw BilibiliResolverException(category, "B 站请求失败 HTTP ${response.code}")
+                        val category = when (response.code) {
+                            401, 403 -> "auth"
+                            429 -> "rate_limit"
+                            else -> "http"
+                        }
+                        throw BilibiliResolverException(category, "B 站请求失败 HTTP ${response.code}", httpStatus = response.code)
                     }
                     val body = response.body?.string().orEmpty()
                     val json = JSONObject(body)
                     val code = json.optInt("code")
                     if (code != 0 && !(allowAnonymous && code == -101)) {
-                        val category = if (code == -101 || code == -400) "auth" else "api"
-                        throw BilibiliResolverException(category, "B 站接口错误 $code：${json.optString("message")}")
+                        val category = if (code == -101) "auth" else "api"
+                        throw BilibiliResolverException(category, "B 站接口错误 $code：${json.optString("message")}", apiCode = code)
                     }
                     return json
                 }
             } catch (exc: BilibiliResolverException) {
-                lastError = exc
-                if (exc.category == "auth") throw exc
+                throw exc
             } catch (exc: IOException) {
                 lastError = exc
             }
-            if (attempt < 2) Thread.sleep(250L * (attempt + 1))
+            if (attempt < 2) Thread.sleep(minOf(8000L, 750L shl attempt))
         }
         throw BilibiliResolverException("network", "B 站网络请求失败",).also { it.initCause(lastError) }
     }

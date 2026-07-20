@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import md5
 import re
-from time import sleep, time
+from threading import Lock
+from time import monotonic, sleep, time
 from typing import Any, Mapping
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -21,7 +22,8 @@ BILIBILI_HOST_SUFFIXES = (
 DEFAULT_BILIBILI_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
 DEFAULT_BILIBILI_REFERER = "https://www.bilibili.com"
 DEFAULT_BILIBILI_API_HOST = "api.bilibili.com"
-TRANSIENT_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
+DEFAULT_BILIBILI_REQUEST_INTERVAL = 0.4
+TRANSIENT_HTTP_STATUS = {408, 425, 500, 502, 503, 504}
 WBI_MIXIN_KEY_TABLE = (
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
     27, 43, 5, 49, 33, 9, 19, 29, 7, 39, 13, 42, 20, 37, 34, 14,
@@ -40,6 +42,7 @@ class BilibiliRequestConfig:
     timeout: float = 30.0
     retries: int = 3
     api_host: str = DEFAULT_BILIBILI_API_HOST
+    request_interval: float = DEFAULT_BILIBILI_REQUEST_INTERVAL
 
     def headers_for(self, url: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         merged = {key: value for key, value in self.headers.items() if value}
@@ -80,6 +83,31 @@ def is_bilibili_url(url: str) -> bool:
     return any(host == suffix or host.endswith(f".{suffix}") for suffix in BILIBILI_HOST_SUFFIXES)
 
 
+class _BilibiliRequestLimiter:
+    def __init__(self):
+        self._lock = Lock()
+        self._next_request_at = 0.0
+
+    def wait(self, interval: float) -> None:
+        interval = max(0.0, float(interval))
+        if interval <= 0:
+            return
+        with self._lock:
+            now = monotonic()
+            start = max(now, self._next_request_at)
+            self._next_request_at = start + interval
+        if start > now:
+            sleep(start - now)
+
+
+_BILIBILI_REQUEST_LIMITER = _BilibiliRequestLimiter()
+
+
+def throttle_bilibili_request(url: str, interval: float = DEFAULT_BILIBILI_REQUEST_INTERVAL) -> None:
+    if is_bilibili_url(url):
+        _BILIBILI_REQUEST_LIMITER.wait(interval)
+
+
 def prepare_bilibili_request(
     url: str,
     headers: dict[str, str] | None = None,
@@ -104,9 +132,17 @@ def prepare_bilibili_request(
 
 
 class BilibiliRequestError(RuntimeError):
-    def __init__(self, category: str, message: str, url: str = "", status_code: int | None = None):
+    def __init__(
+        self,
+        category: str,
+        message: str,
+        url: str = "",
+        status_code: int | None = None,
+        api_code: int | None = None,
+    ):
         self.category = category
         self.status_code = status_code
+        self.api_code = api_code
         self.url = url
         super().__init__(message)
 
@@ -141,6 +177,7 @@ class BilibiliRequestSession:
 
         for attempt in range(attempts):
             try:
+                throttle_bilibili_request(request_url, self.config.request_interval)
                 response = self.http.request(method, request_url, headers=request_headers, **options)
             except requests.RequestException as exc:
                 if attempt + 1 >= attempts:
@@ -148,9 +185,12 @@ class BilibiliRequestSession:
                 sleep(_retry_delay(attempt))
                 continue
 
+            if response.status_code == 429:
+                response.close()
+                raise BilibiliRequestError("rate_limit", "B 站请求过于频繁，请暂停操作后再试", request_url, 429)
             if response.status_code in TRANSIENT_HTTP_STATUS and attempt + 1 < attempts:
                 response.close()
-                sleep(_retry_delay(attempt))
+                sleep(max(_retry_delay(attempt), _retry_after_seconds(response)))
                 continue
             if response.status_code >= 400:
                 category = _http_error_category(response.status_code)
@@ -180,9 +220,9 @@ class BilibiliRequestSession:
             raise BilibiliRequestError("response", "B 站返回的 JSON 结构无效", url)
         code = int(payload.get("code", 0) or 0)
         if code != 0 and code not in allow_codes:
-            category = "auth" if code in {-101, -400} else "api"
+            category = _api_error_category(code)
             message = str(payload.get("message") or "未知接口错误")
-            raise BilibiliRequestError(category, f"B 站接口错误 {code}：{message}", url)
+            raise BilibiliRequestError(category, f"B 站接口错误 {code}：{message}", url, api_code=code)
         return payload
 
     @property
@@ -612,7 +652,15 @@ def _image_key(url: str) -> str:
 
 
 def _retry_delay(attempt: int) -> float:
-    return min(2.0, 0.25 * (2**attempt))
+    return min(8.0, 0.75 * (2**attempt))
+
+
+def _retry_after_seconds(response: requests.Response) -> float:
+    value = getattr(response, "headers", {}).get("Retry-After", "")
+    try:
+        return min(60.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _http_error_category(status_code: int) -> str:
@@ -621,6 +669,10 @@ def _http_error_category(status_code: int) -> str:
     if status_code == 429:
         return "rate_limit"
     return "http"
+
+
+def _api_error_category(code: int) -> str:
+    return "auth" if code == -101 else "api"
 
 
 def _is_bilivideo_host(host: str | None) -> bool:

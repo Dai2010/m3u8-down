@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .bilibili import prepare_bilibili_request
+from .bilibili import prepare_bilibili_request, throttle_bilibili_request
 
 
 class MediaKind(str, Enum):
@@ -136,6 +136,7 @@ def _looks_like_progressive_bytes(body: bytes) -> bool:
 
 def _detect_with_head(url: str, headers: dict[str, str], timeout: int) -> MediaInfo:
     try:
+        throttle_bilibili_request(url)
         with requests.head(url, headers=headers, allow_redirects=True, timeout=timeout) as response:
             content_type = response.headers.get("Content-Type", "")
     except requests.RequestException:
@@ -147,6 +148,7 @@ def _detect_with_preview_get(url: str, headers: dict[str, str], timeout: int) ->
     request_headers = dict(headers)
     request_headers.setdefault("Range", "bytes=0-4095")
     try:
+        throttle_bilibili_request(url)
         with requests.get(url, headers=request_headers, stream=True, allow_redirects=True, timeout=timeout) as response:
             content_type_info = detect_media_type_from_content_type(response.headers.get("Content-Type", ""))
             if content_type_info.kind != MediaKind.UNKNOWN:

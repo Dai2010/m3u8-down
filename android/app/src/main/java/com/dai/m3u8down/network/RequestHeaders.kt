@@ -1,12 +1,27 @@
 package com.dai2010.m3u8down.network
 
 import android.net.Uri
+import android.os.SystemClock
 
 const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36"
 
 fun isBilibiliUrl(url: String): Boolean {
     val host = runCatching { Uri.parse(url).host.orEmpty().lowercase().trimEnd('.') }.getOrDefault("")
     return BILIBILI_HOST_SUFFIXES.any { host == it || host.endsWith(".$it") }
+}
+
+private val bilibiliRequestLock = Any()
+private var nextBilibiliRequestAt = 0L
+
+fun throttleBilibiliRequest(url: String, intervalMs: Long = 400L) {
+    if (!isBilibiliUrl(url)) return
+    val waitMs = synchronized(bilibiliRequestLock) {
+        val now = SystemClock.elapsedRealtime()
+        val start = maxOf(now, nextBilibiliRequestAt)
+        nextBilibiliRequestAt = start + intervalMs.coerceAtLeast(0L)
+        start - now
+    }
+    if (waitMs > 0L) Thread.sleep(waitMs)
 }
 
 fun prepareBilibiliUrl(url: String, enabled: Boolean = false): String {

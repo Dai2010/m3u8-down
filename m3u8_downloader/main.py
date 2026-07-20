@@ -19,6 +19,7 @@ from .core.bilibili import (
     is_bilibili_url,
     parse_bilibili_input,
     prepare_bilibili_request,
+    throttle_bilibili_request,
 )
 from .core.bilibili_auth import BilibiliLoginError, login_bilibili_web_qr
 from .core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
@@ -250,6 +251,7 @@ def _safe_bilibili_name(value: str) -> str:
 
 def _load_media_playlist(url: str, headers: dict[str, str], variant_index: int = -1, bilibili_compat: bool = False) -> Playlist:
     request_url, request_headers = prepare_bilibili_request(url, headers, bilibili_compat)
+    throttle_bilibili_request(request_url)
     response = requests.get(request_url, headers=request_headers, timeout=30)
     response.raise_for_status()
     playlist = parse_playlist(response.text, request_url)
@@ -266,6 +268,7 @@ def _load_media_playlist(url: str, headers: dict[str, str], variant_index: int =
     if variant is None:
         raise ValueError("master playlist has no variants")
     variant_url, variant_headers = prepare_bilibili_request(variant.url, headers, bilibili_compat)
+    throttle_bilibili_request(variant_url)
     response = requests.get(variant_url, headers=variant_headers, timeout=30)
     response.raise_for_status()
     return parse_playlist(response.text, variant_url)

@@ -641,7 +641,9 @@ private fun BilibiliLoginScreen(onCookie: (String) -> Unit, onBack: () -> Unit) 
 }
 
 private fun readBilibiliWebViewCookie(): String = listOf(
+    CookieManager.getInstance().getCookie("https://bilibili.com").orEmpty(),
     CookieManager.getInstance().getCookie("https://www.bilibili.com").orEmpty(),
+    CookieManager.getInstance().getCookie("https://account.bilibili.com").orEmpty(),
     CookieManager.getInstance().getCookie("https://passport.bilibili.com").orEmpty(),
 )
     .flatMap { value -> value.split(';').map(String::trim).filter(String::isNotBlank) }

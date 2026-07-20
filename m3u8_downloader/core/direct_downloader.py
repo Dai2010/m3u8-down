@@ -6,11 +6,16 @@ from collections.abc import Iterable
 
 import requests
 
-from .bilibili import prepare_bilibili_request
+from .bilibili import prepare_bilibili_request, throttle_bilibili_request
 
 
 class DirectDownloadError(RuntimeError):
     """Raised when a direct media URL cannot be saved."""
+
+    def __init__(self, message: str, status_code: int | None = None, retryable: bool = True):
+        self.status_code = status_code
+        self.retryable = retryable
+        super().__init__(message)
 
 
 def download_direct_media(
@@ -32,6 +37,7 @@ def download_direct_media(
     last_error: DirectDownloadError | None = None
 
     for attempt in range(max(1, retries)):
+        attempt_has_retryable_error = False
         for source_url in source_urls:
             try:
                 request_url, request_headers = prepare_bilibili_request(source_url, headers, bilibili_compat)
@@ -39,9 +45,15 @@ def download_direct_media(
                 attempt_headers = dict(request_headers)
                 if part_size and not _has_header(attempt_headers, "Range"):
                     attempt_headers["Range"] = f"bytes={part_size}-"
+                throttle_bilibili_request(request_url)
                 with requests.get(request_url, headers=attempt_headers, stream=True, allow_redirects=True, timeout=timeout) as response:
                     if response.status_code >= 400:
-                        raise DirectDownloadError(f"HTTP {response.status_code}: {request_url.split('?', 1)[0]}")
+                        retryable = response.status_code not in {401, 403, 404, 410, 429}
+                        raise DirectDownloadError(
+                            f"HTTP {response.status_code}: {request_url.split('?', 1)[0]}",
+                            status_code=response.status_code,
+                            retryable=retryable,
+                        )
                     append = part_size > 0 and response.status_code == 206
                     mode = "ab" if append else "wb"
                     with part_path.open(mode) as file_obj:
@@ -58,16 +70,27 @@ def download_direct_media(
                 last_error = exc
                 if str(exc) == "download cancelled":
                     raise
+                if exc.status_code == 429:
+                    raise
+                attempt_has_retryable_error = attempt_has_retryable_error or exc.retryable
             except requests.RequestException as exc:
                 last_error = DirectDownloadError(str(exc))
+                attempt_has_retryable_error = True
             except OSError as exc:
                 last_error = DirectDownloadError(str(exc))
+                attempt_has_retryable_error = True
+        if last_error and not attempt_has_retryable_error:
+            raise last_error
         if attempt + 1 >= max(1, retries):
             raise last_error or DirectDownloadError("direct download failed")
-        sleep(min(attempt + 1, 2))
+        sleep(_retry_delay(attempt))
 
     raise last_error or DirectDownloadError("direct download failed")
 
 
 def _has_header(headers: dict[str, str], name: str) -> bool:
     return any(key.lower() == name.lower() for key in headers)
+
+
+def _retry_delay(attempt: int) -> float:
+    return min(8.0, 0.75 * (2**attempt))

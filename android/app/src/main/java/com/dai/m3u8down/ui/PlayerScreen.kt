@@ -43,6 +43,7 @@ import com.dai2010.m3u8down.network.BilibiliFallbackDataSource
 import com.dai2010.m3u8down.network.BilibiliResolverException
 import com.dai2010.m3u8down.network.BilibiliStreamResolver
 import com.dai2010.m3u8down.network.mediaRequestHeaders
+import com.dai2010.m3u8down.network.throttleBilibiliRequest
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
 import com.dai2010.m3u8down.parser.M3U8Parser
 import androidx.media3.common.MediaItem
@@ -100,9 +101,9 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     var mediaKind by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf(MediaKind.UNKNOWN.name) }
     var mediaContentType by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf("") }
     var status by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf("正在识别媒体类型") }
-    var bilibiliStream by remember(url, referer, bilibiliCompatEnabled) { mutableStateOf<BilibiliResolvedStream?>(null) }
+    var bilibiliStream by remember(url, referer, bilibiliCompatEnabled, bilibiliCookie) { mutableStateOf<BilibiliResolvedStream?>(null) }
 
-    LaunchedEffect(url, referer, adFilterEnabled, keywords, detectedInfo, bilibiliCompatEnabled) {
+    LaunchedEffect(url, referer, adFilterEnabled, keywords, detectedInfo, bilibiliCompatEnabled, bilibiliCookie) {
         try {
             val headers = mediaRequestHeaders(referer, url, bilibiliCompatEnabled, bilibiliCookie)
             mediaUri = ""
@@ -129,8 +130,13 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
             }
             status = ""
         } catch (exc: Exception) {
-            status = if (exc is BilibiliResolverException && exc.category == "auth") {
-                "B站鉴权失败：请填写有效 Cookie，当前 URL 可能已过期"
+            status = if (exc is BilibiliResolverException) {
+                when {
+                    exc.apiCode == -101 -> "B站请求需要登录，请使用页面中的 B 站登录功能"
+                    exc.apiCode != null -> "B站接口错误：${exc.message}"
+                    exc.category == "auth" -> "B站鉴权失败：${exc.message}，可使用页面中的 B 站登录功能"
+                    else -> "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
+                }
             } else {
                 "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
             }
@@ -238,6 +244,7 @@ private fun createFilteredPlaylist(cacheDir: File, url: String, referer: String,
         val requestTarget = prepareBilibiliUrl(target, bilibiliCompatEnabled)
         val builder = Request.Builder().url(requestTarget)
         headers.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
+        throttleBilibiliRequest(requestTarget)
         client.newCall(builder.build()).execute().use { response ->
             if (!response.isSuccessful) error("HTTP ${response.code}: $requestTarget")
             return response.body?.string() ?: error("empty response body: $requestTarget")

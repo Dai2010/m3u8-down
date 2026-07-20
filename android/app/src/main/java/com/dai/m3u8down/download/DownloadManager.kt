@@ -8,6 +8,7 @@ import com.dai2010.m3u8down.network.isBilibiliUrl
 import com.dai2010.m3u8down.network.BilibiliStreamResolver
 import com.dai2010.m3u8down.network.prepareBilibiliHeaders
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
+import com.dai2010.m3u8down.network.throttleBilibiliRequest
 import com.dai2010.m3u8down.parser.M3U8Parser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -90,7 +91,12 @@ class DownloadManager(
         require(segments.isNotEmpty()) { "no playable segments after filtering" }
 
         val downloader = SegmentDownloader(client, requestHeaders, effectiveBilibiliCompat)
-        val semaphore = Semaphore(concurrency.coerceAtLeast(1))
+        val effectiveConcurrency = if (effectiveBilibiliCompat) {
+            minOf(concurrency.coerceAtLeast(1), 2)
+        } else {
+            concurrency.coerceAtLeast(1)
+        }
+        val semaphore = Semaphore(effectiveConcurrency)
         var done = 0
         val tsFiles = coroutineScope {
             segments.mapIndexed { index, segment ->
@@ -115,6 +121,7 @@ class DownloadManager(
             val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, bilibiliCompatEnabled)
             val builder = Request.Builder().url(requestUrl)
             requestHeaders.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
+            throttleBilibiliRequest(requestUrl)
             client.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) error("HTTP ${response.code}: $requestUrl")
                 response.body?.string() ?: error("empty response body: $requestUrl")

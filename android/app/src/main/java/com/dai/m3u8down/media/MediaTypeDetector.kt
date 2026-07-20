@@ -3,6 +3,7 @@ package com.dai2010.m3u8down.media
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
+import com.dai2010.m3u8down.network.throttleBilibiliRequest
 import java.util.Locale
 
 enum class MediaKind(val displayName: String) {
@@ -44,6 +45,7 @@ object MediaTypeDetector {
 
         runCatching {
             val request = Request.Builder().url(requestUrl).head().applyHeaders(headers).build()
+            throttleBilibiliRequest(requestUrl)
             client.newCall(request).execute().use { response ->
                 val byType = fromContentType(response.header("Content-Type").orEmpty())
                 if (byType.kind != MediaKind.UNKNOWN) return byType
@@ -52,6 +54,7 @@ object MediaTypeDetector {
 
         return runCatching {
             val request = Request.Builder().url(requestUrl).header("Range", "bytes=0-4095").applyHeaders(headers).build()
+            throttleBilibiliRequest(requestUrl)
             client.newCall(request).execute().use { response ->
                 val byType = fromContentType(response.header("Content-Type").orEmpty())
                 if (byType.kind != MediaKind.UNKNOWN) return byType
