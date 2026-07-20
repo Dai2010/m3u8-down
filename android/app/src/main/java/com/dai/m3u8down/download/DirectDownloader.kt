@@ -7,8 +7,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.io.IOException
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 
 class DirectDownloader(
     private val client: OkHttpClient,
@@ -34,7 +35,7 @@ class DirectDownloader(
                         if (!response.isSuccessful) error("HTTP ${response.code}: $source")
                         val append = partSize > 0L && response.code == 206
                         response.body?.byteStream()?.use { input ->
-                            part.outputStream(append).use { output -> input.copyTo(output) }
+                            FileOutputStream(part, append).use { output -> input.copyTo(output) }
                         } ?: error("empty response body: $source")
                     }
                     if (outputFile.exists()) outputFile.delete()

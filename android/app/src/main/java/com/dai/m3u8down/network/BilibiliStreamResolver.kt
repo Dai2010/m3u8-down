@@ -1,4 +1,4 @@
-package com.dai.m3u8down.network
+package com.dai2010.m3u8down.network
 
 import android.net.Uri
 import org.json.JSONArray
@@ -7,9 +7,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.security.MessageDigest
-
-import com.dai2010.m3u8down.network.isBilibiliUrl
-import com.dai2010.m3u8down.network.prepareBilibiliHeaders
 
 data class BilibiliDashTrack(
     val url: String,
