@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION="${1:-4.2.3}"
+VERSION="${1:-4.2.5}"
 DEB_ROOT="$ROOT/build/deb-root"
 OUT_DIR="$ROOT/build/release"
 
@@ -22,8 +22,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: Dai2010 <noreply@github.com>
-Depends: python3 (>= 3.10), python3-requests, python3-aiohttp, python3-pyqt6, python3-textual, ffmpeg
-Recommends: mpv | vlc
+Depends: python3 (>= 3.10), python3-requests, python3-aiohttp, python3-pyqt6, python3-textual, python3-vlc, vlc, ffmpeg
 Description: m3u8 downloader and ad-filtering streamer
  A self-contained m3u8 downloader and local ad-filtering stream proxy.
 CONTROL

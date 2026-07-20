@@ -1,3 +1,4 @@
 -r requirements.txt
 aiohttp>=3.9.0
 PyQt6>=6.6.0
+python-vlc>=3.0.20123

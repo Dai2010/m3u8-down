@@ -78,6 +78,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-desktop.txt pyinstaller pillow
+      - name: Download VLC runtime
+        shell: pwsh
+        run: |
+          $version = "3.0.21"
+          $archive = Join-Path $env:RUNNER_TEMP "vlc-$version-win64.zip"
+          $url = "https://get.videolan.org/vlc/$version/win64/vlc-$version-win64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $env:RUNNER_TEMP -Force
+          $directory = Get-ChildItem $env:RUNNER_TEMP -Directory -Filter "vlc-$version-win64" | Select-Object -First 1
+          if (-not $directory) { throw "VLC archive directory was not found" }
+          "VLC_DIR=$($directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Prepare icon
         shell: python
         run: |
@@ -89,7 +100,7 @@ jobs:
           icon.paste(source, ((canvas_size - source.width) // 2, (canvas_size - source.height) // 2))
           icon.save("packaging/assets/m3u8-downloader.ico", format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
       - name: Build GUI executable
-        run: pyinstaller --name m3u8-downloader-gui --onefile --windowed --paths . --collect-submodules m3u8_downloader --icon packaging/assets/m3u8-downloader.ico --add-data "packaging/assets/m3u8-downloader.ico;." m3u8_downloader/gui/launcher.py
+        run: pyinstaller --name m3u8-downloader-gui --onefile --windowed --paths . --collect-submodules m3u8_downloader --hidden-import vlc --icon packaging/assets/m3u8-downloader.ico --add-data "packaging/assets/m3u8-downloader.ico;." --add-binary "$env:VLC_DIR/libvlc.dll;vlc" --add-binary "$env:VLC_DIR/libvlccore.dll;vlc" --add-data "$env:VLC_DIR/plugins;vlc/plugins" m3u8_downloader/gui/launcher.py
       - name: Build CLI executable
         run: pyinstaller --name m3u8-downloader --onefile --console --paths . --collect-submodules m3u8_downloader --collect-submodules textual --hidden-import m3u8_downloader.tui.app --icon packaging/assets/m3u8-downloader.ico m3u8_downloader/cli_launcher.py
       - name: Build TUI executable

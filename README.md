@@ -13,7 +13,7 @@
 - 按关键词或正则过滤广告片段。
 - 多线程下载 TS 分片，支持 `.part` 临时文件和已完成分片跳过。
 - 调用 FFmpeg 将分片合并为 MP4。
-- 提供本地 m3u8 流播代理，可动态过滤广告片段后转发给 mpv、VLC 等播放器。
+- 桌面 GUI 内嵌 libVLC 播放器，提供播放、停止、进度、倍速和全屏控制；本地 m3u8 流播代理可动态过滤广告片段。
 - GUI 和 Android 端支持点击后预览 m3u8 列表完整全文，输入阶段不会自动拉取列表。
 - 桌面端支持 CLI、GUI、TUI 三种使用方式。
 - GUI、TUI 和 Android 端支持深色模式，默认跟随系统主题；GUI 和 Android 可自定义主按钮颜色。
@@ -87,13 +87,13 @@ apt install ./m3u8-downloader_<版本>_termux_aarch64.deb
 m3u8-downloader-tui
 ```
 
-HLS 流播代理会输出本地播放地址，可复制到 mpv 或 VLC；非 HLS 媒体会直接输出原播放地址：
+CLI/TUI 的 HLS 流播代理会输出本地播放地址，可复制到 mpv 或 VLC；桌面 GUI 会直接使用内嵌的 libVLC 播放器。非 HLS 媒体会直接输出原播放地址：
 
 ```text
 http://127.0.0.1:8888/stream.m3u8?src=...
 ```
 
-桌面端需要系统已安装 FFmpeg：
+桌面端流播使用 libVLC，Linux deb 会自动依赖 VLC；Windows 安装包内置 VLC 运行库。桌面端下载和合并仍需要系统已安装 FFmpeg：
 
 ```bash
 sudo apt install ffmpeg
@@ -114,8 +114,8 @@ Android APK 面向不依赖 GMS 的侧载安装场景，当前优先发布 `arm6
 
 Windows 版本由 GitHub Actions Release workflow 在 `windows-latest` 上构建，产物包括：
 
-- `m3u8-downloader-4.2.3-windows-x64.exe`
-- `m3u8-downloader-4.2.3-windows-x64.msi`
+- `m3u8-downloader-4.2.5-windows-x64.exe`
+- `m3u8-downloader-4.2.5-windows-x64.msi`
 
 Windows `.exe` 安装器和 `.msi` 都会安装 GUI、CLI 和 TUI 三个入口，并把安装目录加入 PATH，PowerShell 中可直接运行：
 
@@ -156,10 +156,10 @@ ANDROID_HOME="$HOME/Android/Sdk" ANDROID_SDK_ROOT="$HOME/Android/Sdk" ~/gradle-8
 Linux deb 构建示例：
 
 ```bash
-packaging/linux/build_deb.sh 4.2.3
+packaging/linux/build_deb.sh 4.2.5
 ```
 
-所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64 和 Windows x64；发布 Windows、Android、Linux 和 Termux aarch64 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.4`。
+所有平台构建均由 GitHub Actions 完成：`Build` workflow 会在 `main` 推送、针对 `main` 的 Pull Request 或手动触发时编译 Android arm64、Linux amd64 和 Windows x64；发布 Windows、Android、Linux 和 Termux aarch64 资产时，可以在 GitHub Actions 中手动运行 `Release` workflow，并填写 tag，例如 `v4.2.5`。
 
 Android 发布前必须配置以下 GitHub Actions secrets：`M3U8_ANDROID_KEYSTORE_BASE64`、`M3U8_ANDROID_STORE_PASSWORD`、`M3U8_ANDROID_KEY_ALIAS` 和 `M3U8_ANDROID_KEY_PASSWORD`。工作流会使用持久保存的 PKCS#12 发布密钥签名并校验证书指纹；缺少私钥或指纹不一致时直接失败，不上传不可升级的 APK。更换发布密钥后，旧证书签名的 APK 不能直接覆盖安装。
 
@@ -170,7 +170,7 @@ APK/AAB、deb/dpkg 包和构建目录不提交到 Git。发布版本时只把最
 当前发布资产包括：
 
 - `m3u8-downloader-android-arm64-v8a-debug.apk`
-- `m3u8-downloader_4.2.3_amd64.deb`
-- `m3u8-downloader_4.2.4_termux_aarch64.deb`
-- `m3u8-downloader-4.2.3-windows-x64.exe`
-- `m3u8-downloader-4.2.3-windows-x64.msi`
+- `m3u8-downloader_4.2.5_amd64.deb`
+- `m3u8-downloader_4.2.5_termux_aarch64.deb`
+- `m3u8-downloader-4.2.5-windows-x64.exe`
+- `m3u8-downloader-4.2.5-windows-x64.msi`

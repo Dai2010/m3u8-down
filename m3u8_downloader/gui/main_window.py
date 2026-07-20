@@ -46,6 +46,7 @@ from ..core.merger import merge_to_mp4
 from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
+from .player import VlcPlayerWidget, VlcUnavailableError
 from .settings_dialog import SettingsDialog
 from .theme import apply_gui_theme
 
@@ -155,7 +156,7 @@ class DownloadWorker(QThread):
 
 
 class ProxyWorker(QThread):
-    started_url = pyqtSignal(str, str)
+    started_url = pyqtSignal(str, str, object)
     failed = pyqtSignal(str)
 
     def __init__(self, url: str, config: dict, media_info: MediaInfo | None = None, parent=None):
@@ -186,7 +187,7 @@ class ProxyWorker(QThread):
             request_url, request_headers = prepare_bilibili_request(self.url, headers, bilibili_compat)
             media_info = self.media_info or detect_media_type(self.url, headers, bilibili_compat=bilibili_compat)
             if media_info.kind != MediaKind.HLS:
-                self.started_url.emit(request_url, media_info.display_name)
+                self.started_url.emit(request_url, media_info.display_name, request_headers)
                 return
 
             self.server = ProxyServer(
@@ -196,7 +197,7 @@ class ProxyWorker(QThread):
                 bilibili_compat=bilibili_compat,
             )
             await self.server.start()
-            self.started_url.emit(self.server.get_stream_url(request_url), media_info.display_name)
+            self.started_url.emit(self.server.get_stream_url(request_url), media_info.display_name, request_headers)
             self.stop_event = asyncio.Event()
             await self.stop_event.wait()
         except Exception as exc:  # noqa: BLE001 - show concise GUI error.
@@ -283,6 +284,8 @@ class MainWindow(QMainWindow):
         self.detection_workers: set[MediaDetectionWorker] = set()
         self.stream_media_info: MediaInfo | None = None
         self.stream_detected_url = ""
+        self.stream_active = False
+        self.player_fullscreen = False
         self.download_row_status: dict[QLineEdit, QLabel] = {}
         self.download_row_preview: dict[QLineEdit, QPushButton] = {}
         self.download_row_timers: dict[QLineEdit, QTimer] = {}
@@ -421,6 +424,8 @@ class MainWindow(QMainWindow):
     def _schedule_stream_detection(self) -> None:
         if not hasattr(self, "stream_url"):
             return
+        if self.stream_active:
+            self._stop_proxy()
         self.stream_detect_timer.stop()
         url = self.stream_url.text().strip()
         self.stream_media_info = None
@@ -521,6 +526,10 @@ class MainWindow(QMainWindow):
             status.setText(f"探测失败：{message}")
 
     def _stop_proxy(self) -> None:
+        self.stream_active = False
+        if hasattr(self, "stream_player"):
+            self.stream_player.stop()
+            self.stream_player.hide()
         if self.proxy_worker:
             self.proxy_worker.stop()
             self.proxy_worker = None
@@ -528,22 +537,68 @@ class MainWindow(QMainWindow):
         self.stop_proxy_button.setEnabled(False)
         self._append_stream_log("Proxy stopped")
 
-    def _proxy_started(self, proxy_url: str, media_name: str) -> None:
+    def _proxy_started(self, proxy_url: str, media_name: str, headers: object) -> None:
         self._append_stream_log(f"Detected {media_name}")
         self._append_stream_log(f"Playback URL: {proxy_url}")
-        self.stream_status.setText("Proxy running" if self.proxy_worker and self.proxy_worker.server else "Direct media URL")
+        try:
+            self.stream_player.play(proxy_url, headers if isinstance(headers, dict) else {})
+        except VlcUnavailableError as exc:
+            self._proxy_failed(str(exc))
+            return
+        self.stream_player.show()
+        self.stream_active = True
+        self.stop_proxy_button.setEnabled(True)
+        self.stream_status.setText("正在播放")
 
     def _proxy_failed(self, message: str) -> None:
+        self.stream_active = False
+        if hasattr(self, "stream_player"):
+            self.stream_player.stop()
+            self.stream_player.hide()
         self._append_stream_log(f"Proxy failed: {message}")
         self.proxy_button.setEnabled(True)
         self.stop_proxy_button.setEnabled(False)
         QMessageBox.critical(self, "Proxy failed", message)
 
     def _proxy_finished(self) -> None:
-        if self.proxy_worker and self.proxy_worker.server:
+        if self.stream_active:
             return
         self.proxy_button.setEnabled(True)
         self.stop_proxy_button.setEnabled(False)
+
+    def _toggle_player_fullscreen(self) -> None:
+        self._set_player_fullscreen(not self.player_fullscreen)
+
+    def _set_player_fullscreen(self, enabled: bool) -> None:
+        if enabled == self.player_fullscreen:
+            return
+        self.player_fullscreen = enabled
+        if enabled:
+            for widget in self.stream_chrome_widgets:
+                widget.hide()
+            self.stream_page.layout().setContentsMargins(0, 0, 0, 0)
+            self.showFullScreen()
+            self.stream_player.fullscreen_button.setText("退出全屏")
+        else:
+            self.showNormal()
+            self.stream_page.layout().setContentsMargins(24, 24, 24, 24)
+            for widget in self.stream_chrome_widgets:
+                widget.show()
+            self.stream_player.fullscreen_button.setText("全屏")
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape and self.player_fullscreen:
+            self._set_player_fullscreen(False)
+            return
+        super().keyPressEvent(event)
+
+    def closeEvent(self, event) -> None:
+        if self.player_fullscreen:
+            self._set_player_fullscreen(False)
+        self._stop_proxy()
+        if hasattr(self, "stream_player"):
+            self.stream_player.close()
+        event.accept()
 
     def _playlist_preview_loaded(self, url: str, content: str) -> None:
         PlaylistPreviewDialog(url, content, self).exec()
@@ -736,7 +791,10 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
-        layout.addLayout(self._header_row("流播"))
+        header_widget = QWidget()
+        header_widget.setLayout(self._header_row("流播"))
+        layout.addWidget(header_widget)
+        self.stream_chrome_widgets = [header_widget]
 
         self.stream_url = QLineEdit()
         self.stream_url.setPlaceholderText("https://example.com/video/index.m3u8 or video.mp4")
@@ -762,7 +820,6 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
         form.addRow("媒体地址", stream_url_row)
-        layout.addLayout(form)
         advanced_toggle = QPushButton("高级")
         advanced_toggle.setCheckable(True)
         advanced_toggle.setChecked(False)
@@ -774,8 +831,19 @@ class MainWindow(QMainWindow):
         advanced_form.addRow(self.stream_keywords_label, self.stream_keywords)
         advanced_panel.setVisible(False)
         advanced_toggle.toggled.connect(advanced_panel.setVisible)
-        layout.addWidget(advanced_toggle)
-        layout.addWidget(advanced_panel)
+        input_panel = QWidget()
+        input_layout = QVBoxLayout(input_panel)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.addLayout(form)
+        input_layout.addWidget(advanced_toggle)
+        input_layout.addWidget(advanced_panel)
+        layout.addWidget(input_panel)
+        self.stream_chrome_widgets.append(input_panel)
+
+        self.stream_player = VlcPlayerWidget()
+        self.stream_player.setVisible(False)
+        self.stream_player.fullscreen_requested.connect(self._toggle_player_fullscreen)
+        layout.addWidget(self.stream_player, 1)
 
         self.proxy_button = QPushButton("开始流播")
         self.proxy_button.clicked.connect(self._start_proxy)
@@ -799,13 +867,17 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.preview_button)
         controls.addWidget(self.stop_proxy_button)
         controls.addStretch(1)
-        layout.addLayout(controls)
+        controls_widget = QWidget()
+        controls_widget.setLayout(controls)
+        layout.addWidget(controls_widget)
+        self.stream_chrome_widgets.append(controls_widget)
 
         self.stream_status = QLabel("等待操作")
         self.stream_log = QTextEdit()
         self.stream_log.setReadOnly(True)
         layout.addWidget(self.stream_status)
         layout.addWidget(self.stream_log, 1)
+        self.stream_chrome_widgets.extend([self.stream_status, self.stream_log])
         self.stream_url.textChanged.connect(lambda _text: self._schedule_stream_detection())
         self.stream_referer.textChanged.connect(lambda _text: self._schedule_stream_detection())
         self._schedule_stream_detection()
