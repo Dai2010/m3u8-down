@@ -138,10 +138,10 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     }
 
     val player = remember(mediaUri, bilibiliStream, referer, mediaKind, mediaContentType, bilibiliCompatEnabled, bilibiliCookie) {
-        if (mediaUri.isBlank() && bilibiliStream == null) return@remember null
+        val stream = bilibiliStream
+        if (mediaUri.isBlank() && stream == null) return@remember null
         val requestHeaders = mediaRequestHeaders(referer, url, bilibiliCompatEnabled, bilibiliCookie)
-        val dataSourceFactory: DataSource.Factory = if (bilibiliStream != null) {
-            val stream = bilibiliStream
+        val dataSourceFactory: DataSource.Factory = if (stream != null) {
             BilibiliFallbackDataSource.Factory(
                 requestHeaders,
                 buildMap {
@@ -156,13 +156,13 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
         }
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         ExoPlayer.Builder(context).build().apply {
-            if (bilibiliStream != null) {
+            if (stream != null) {
                 val videoItem = MediaItem.Builder()
-                    .setUri(bilibiliStream.video.url)
+                    .setUri(stream.video.url)
                     .setMimeType(MimeTypes.VIDEO_MP4)
                     .build()
                 val videoSource = mediaSourceFactory.createMediaSource(videoItem)
-                val audio = bilibiliStream.audio
+                val audio = stream.audio
                 if (audio == null) {
                     setMediaSource(videoSource)
                 } else {
