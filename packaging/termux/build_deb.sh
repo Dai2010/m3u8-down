@@ -26,7 +26,7 @@ Section: video
 Priority: optional
 Architecture: $ARCHITECTURE
 Maintainer: Dai2010 <noreply@github.com>
-Depends: python (>= 3.10), ffmpeg
+Depends: python (>= 3.10), python-qrcode, python-pillow, ffmpeg
 Description: m3u8 downloader CLI and TUI for Termux
  A command-line and terminal user interface for downloading and streaming media.
  This Termux package excludes the desktop GUI and Qt dependencies.

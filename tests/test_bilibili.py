@@ -1,4 +1,6 @@
 from m3u8_downloader.core.bilibili import (
+    BilibiliRequestConfig,
+    BilibiliRequestSession,
     BilibiliMediaManifest,
     BilibiliPage,
     BilibiliSelectionPolicy,
@@ -8,6 +10,28 @@ from m3u8_downloader.core.bilibili import (
     parse_bilibili_input,
     prepare_bilibili_request,
 )
+from m3u8_downloader.core.bilibili_auth import _cookie_from_login_url
+
+
+class _JsonResponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+    def close(self):
+        return None
+
+
+class _JsonHttp:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def request(self, *args, **kwargs):
+        return _JsonResponse(self.payload)
 
 
 def test_bilibili_domain_detection_accepts_first_party_and_cdn_hosts():
@@ -58,6 +82,39 @@ def test_config_cookie_is_added_to_bilibili_headers_without_overwriting_explicit
     assert headers["Cookie"] == "SESSDATA=config"
     explicit = build_bilibili_headers({"bilibili_cookie": "SESSDATA=config"}, {"Cookie": "SESSDATA=explicit"})
     assert explicit["Cookie"] == "SESSDATA=explicit"
+
+
+def test_anonymous_nav_response_can_supply_wbi_data():
+    session = BilibiliRequestSession(
+        BilibiliRequestConfig(),
+        http=_JsonHttp({
+            "code": -101,
+            "message": "账号未登录",
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/" + "a" * 64 + ".png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/" + "b" * 64 + ".png",
+                },
+            },
+        }),
+    )
+
+    payload = session.request_json(
+        "https://api.bilibili.com/x/web-interface/nav",
+        allow_codes=frozenset({-101}),
+    )
+
+    assert payload["code"] == -101
+    assert not session.has_cookie
+    assert len(session._load_wbi_key()) == 32
+
+
+def test_qr_login_cookie_parser_keeps_only_login_cookies():
+    cookie = _cookie_from_login_url(
+        "https://passport.bilibili.com/cross?SESSDATA=session%2Bvalue&bili_jct=csrf&gourl=https%3A%2F%2Fwww.bilibili.com"
+    )
+
+    assert cookie == "SESSDATA=session%2Bvalue; bili_jct=csrf"
 
 
 def test_manifest_selection_uses_codec_policy_before_bandwidth():

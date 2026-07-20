@@ -140,6 +140,9 @@ object BilibiliStreamResolver {
             "support_multi_audio" to "true",
             "wts" to (System.currentTimeMillis() / 1000).toString(),
         )
+        if (requestHeaders.keys.none { it.equals("Cookie", ignoreCase = true) }) {
+            playParams["try_look"] = "1"
+        }
         val unsignedQuery = buildQuery(playParams)
         val signedQuery = "$unsignedQuery&w_rid=${md5Hex(unsignedQuery + wbiKey)}"
         val play = fetchJson(client, buildApiUrl("/x/player/wbi/playurl", signedQuery), requestHeaders)
@@ -170,7 +173,7 @@ object BilibiliStreamResolver {
             if (cachedWbiKeyExpiresAt > now) return key
         }
         val navUrl = buildApiUrl("/x/web-interface/nav", emptyMap())
-        val nav = fetchJson(client, navUrl, headers)
+        val nav = fetchJson(client, navUrl, headers, allowAnonymous = true)
         val wbiImage = nav.getJSONObject("data").getJSONObject("wbi_img")
         val imgKey = extractImageKey(wbiImage.getString("img_url"))
         val subKey = extractImageKey(wbiImage.getString("sub_url"))
@@ -233,7 +236,12 @@ object BilibiliStreamResolver {
         else -> 0
     }
 
-    private fun fetchJson(client: OkHttpClient, url: String, headers: Map<String, String>): JSONObject {
+    private fun fetchJson(
+        client: OkHttpClient,
+        url: String,
+        headers: Map<String, String>,
+        allowAnonymous: Boolean = false,
+    ): JSONObject {
         var lastError: Throwable? = null
         repeat(3) { attempt ->
             try {
@@ -247,7 +255,7 @@ object BilibiliStreamResolver {
                     val body = response.body?.string().orEmpty()
                     val json = JSONObject(body)
                     val code = json.optInt("code")
-                    if (code != 0) {
+                    if (code != 0 && !(allowAnonymous && code == -101)) {
                         val category = if (code == -101 || code == -400) "auth" else "api"
                         throw BilibiliResolverException(category, "B 站接口错误 $code：${json.optString("message")}")
                     }

@@ -43,6 +43,10 @@ This option can be repeated. A common use is passing a Referer header.
 Set the Bilibili Cookie for a Bilibili download. This value takes precedence
 over the saved Bilibili Cookie configuration.
 .TP
+.B \--bilibili-login
+Generate a QR code, wait for web login confirmation, and save the resulting
+login state to the configuration file.
+.TP
 .BI \--page " PAGE"
 Select one Bilibili page number, starting at 1.
 .TP
@@ -154,6 +158,10 @@ m3u8-downloader "https://www.bilibili.com/video/BV..." \
   --quality 80 \
   --video-codec avc \
   --output lesson.mp4
+.EE
+.SS Save login state without copying a Cookie
+.EX
+m3u8-downloader --bilibili-login
 .EE
 .SS Download all Bilibili pages and save attachments
 .EX

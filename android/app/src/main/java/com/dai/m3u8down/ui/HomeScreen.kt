@@ -3,6 +3,9 @@ package com.dai2010.m3u8down.ui
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +51,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -65,6 +69,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.documentfile.provider.DocumentFile
 import com.dai2010.m3u8down.BuildConfig
 import com.dai2010.m3u8down.config.DEFAULT_FILTER_KEYWORDS_TEXT
@@ -143,6 +148,7 @@ fun HomeScreen(
     var bilibiliPages by remember { mutableStateOf<BilibiliPageCollection?>(null) }
     var selectedBilibiliPage by rememberSaveable { mutableIntStateOf(1) }
     var bilibiliCookie by remember { mutableStateOf(BilibiliCookieStore.load(context)) }
+    var bilibiliLoginReturnScreen by rememberSaveable { mutableStateOf("home") }
     var nextItemId by rememberSaveable { mutableIntStateOf(2) }
     val downloadItems = remember { mutableStateListOf(DownloadItem(1)) }
     var profiles by remember { mutableStateOf(ProfileStore.load(context)) }
@@ -313,6 +319,7 @@ fun HomeScreen(
             { streamKeywords = it },
             bilibiliCookie,
             { value -> bilibiliCookie = value; BilibiliCookieStore.save(context, value) },
+            { bilibiliLoginReturnScreen = "stream"; screen = "bilibiliLogin" },
             streamDetectionStatus,
             streamMediaInfo,
             streamDetectedUrl,
@@ -359,6 +366,7 @@ fun HomeScreen(
             onKeywordsChange = { downloadKeywords = it },
             bilibiliCookie = bilibiliCookie,
             onBilibiliCookieChange = { value -> bilibiliCookie = value; BilibiliCookieStore.save(context, value) },
+            onBilibiliLogin = { bilibiliLoginReturnScreen = "download"; screen = "bilibiliLogin" },
             bilibiliQualityText = bilibiliQualityText,
             onBilibiliQualityChange = { bilibiliQualityText = it.filter(Char::isDigit).take(3) },
             bilibiliSaveSubtitles = bilibiliSaveSubtitles,
@@ -464,6 +472,14 @@ fun HomeScreen(
                 screen = "player"
             },
             onBack = { goBack() },
+        )
+        "bilibiliLogin" -> BilibiliLoginScreen(
+            onCookie = { value ->
+                bilibiliCookie = value
+                BilibiliCookieStore.save(context, value)
+                screen = bilibiliLoginReturnScreen
+            },
+            onBack = { screen = bilibiliLoginReturnScreen },
         )
         "player" -> PlayerScreen(playbackUrl.ifBlank { url }, referer, streamAdFilterEnabled, streamKeywords.lines().filter { it.isNotBlank() }, streamMediaInfo, streamBilibiliCompatActive, bilibiliCookie, {
             if (bilibiliPages?.pages.orEmpty().size > 1) screen = "bilibiliPages" else goBack()
@@ -574,7 +590,66 @@ private fun OptionSwitch(label: String, checked: Boolean, onCheckedChange: (Bool
 }
 
 @Composable
-private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, detectionStatus: String, mediaInfo: MediaInfo?, detectedUrl: String, onPlay: () -> Unit, onPreview: () -> Unit, onBack: () -> Unit) {
+private fun BilibiliLoginScreen(onCookie: (String) -> Unit, onBack: () -> Unit) {
+    var status by remember { mutableStateOf("请在页面中完成 B 站登录") }
+    var captured by remember { mutableStateOf(false) }
+    val webView = remember { mutableStateOf<WebView?>(null) }
+    BackHandler(onBack = onBack)
+    DisposableEffect(Unit) {
+        onDispose {
+            webView.value?.stopLoading()
+            webView.value?.destroy()
+            webView.value = null
+        }
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            TextButton(onClick = onBack) { Text("返回") }
+            Text("B 站登录", fontWeight = FontWeight.Bold)
+        }
+        Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp))
+        AndroidView(
+            factory = { context ->
+                CookieManager.getInstance().setAcceptCookie(true)
+                WebView(context).apply {
+                    webView.value = this
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, url: String) {
+                            super.onPageFinished(view, url)
+                            CookieManager.getInstance().flush()
+                            val cookie = readBilibiliWebViewCookie()
+                            if (!captured && cookie.contains("SESSDATA=")) {
+                                captured = true
+                                status = "登录成功，正在返回"
+                                onCookie(cookie)
+                            } else {
+                                status = "请在页面中完成 B 站登录"
+                            }
+                        }
+                    }
+                    loadUrl("https://passport.bilibili.com/login")
+                }
+            },
+            modifier = Modifier.fillMaxSize().weight(1f),
+        )
+    }
+}
+
+private fun readBilibiliWebViewCookie(): String = listOf(
+    CookieManager.getInstance().getCookie("https://www.bilibili.com").orEmpty(),
+    CookieManager.getInstance().getCookie("https://passport.bilibili.com").orEmpty(),
+)
+    .flatMap { value -> value.split(';').map(String::trim).filter(String::isNotBlank) }
+    .distinctBy { value -> value.substringBefore('=') }
+    .joinToString("; ")
+
+@Composable
+private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, onBilibiliLogin: () -> Unit, detectionStatus: String, mediaInfo: MediaInfo?, detectedUrl: String, onPlay: () -> Unit, onPreview: () -> Unit, onBack: () -> Unit) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     FormScreen("流播", onBack) {
         LabeledField("媒体地址") { OutlinedTextField(url, onUrlChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
@@ -582,7 +657,13 @@ private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: St
         AdvancedToggle(advancedExpanded) { advancedExpanded = it }
         if (advancedExpanded) {
             LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
-            LabeledField("B站 Cookie（加密保存）") { OutlinedTextField(bilibiliCookie, onBilibiliCookieChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            LabeledField("B站 Cookie（加密保存）") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(bilibiliCookie, onBilibiliCookieChange, singleLine = true, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = onBilibiliLogin) { Text("登录") }
+                }
+            }
             BilibiliCompatSwitch(bilibiliCompatEnabled, onBilibiliCompatEnabledChange)
             FilterSwitch(adFilterEnabled, onAdFilterEnabledChange)
             if (adFilterEnabled) LabeledField("过滤关键词，每行一个") { OutlinedTextField(keywords, onKeywordsChange, minLines = 3, modifier = Modifier.fillMaxWidth()) }
@@ -596,7 +677,7 @@ private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: St
 }
 
 @Composable
-private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, bilibiliQualityText: String, onBilibiliQualityChange: (String) -> Unit, bilibiliSaveSubtitles: Boolean, onBilibiliSaveSubtitlesChange: (Boolean) -> Unit, bilibiliSaveCover: Boolean, onBilibiliSaveCoverChange: (Boolean) -> Unit, bilibiliSaveDanmaku: Boolean, onBilibiliSaveDanmakuChange: (Boolean) -> Unit, bilibiliSaveChapters: Boolean, onBilibiliSaveChaptersChange: (Boolean) -> Unit, bilibiliSaveInfo: Boolean, onBilibiliSaveInfoChange: (Boolean) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
+private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, onBilibiliLogin: () -> Unit, bilibiliQualityText: String, onBilibiliQualityChange: (String) -> Unit, bilibiliSaveSubtitles: Boolean, onBilibiliSaveSubtitlesChange: (Boolean) -> Unit, bilibiliSaveCover: Boolean, onBilibiliSaveCoverChange: (Boolean) -> Unit, bilibiliSaveDanmaku: Boolean, onBilibiliSaveDanmakuChange: (Boolean) -> Unit, bilibiliSaveChapters: Boolean, onBilibiliSaveChaptersChange: (Boolean) -> Unit, bilibiliSaveInfo: Boolean, onBilibiliSaveInfoChange: (Boolean) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     FormScreen("下载", onBack) {
         items.forEach { item ->
@@ -616,7 +697,13 @@ private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadIte
         AdvancedToggle(advancedExpanded) { advancedExpanded = it }
         if (advancedExpanded) {
             LabeledField("Referer，可留空") { OutlinedTextField(referer, onRefererChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
-            LabeledField("B站 Cookie（加密保存）") { OutlinedTextField(bilibiliCookie, onBilibiliCookieChange, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            LabeledField("B站 Cookie（加密保存）") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(bilibiliCookie, onBilibiliCookieChange, singleLine = true, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = onBilibiliLogin) { Text("登录") }
+                }
+            }
             LabeledField("B站最高画质 ID，留空自动") { OutlinedTextField(bilibiliQualityText, onBilibiliQualityChange, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) }
             OptionSwitch("下载并封装字幕", bilibiliSaveSubtitles, onBilibiliSaveSubtitlesChange)
             OptionSwitch("保存封面", bilibiliSaveCover, onBilibiliSaveCoverChange)

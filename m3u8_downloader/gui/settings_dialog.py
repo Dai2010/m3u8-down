@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QEvent, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
@@ -30,6 +30,7 @@ from ..config.theme import THEME_OPTIONS, normalize_button_color, normalize_them
 
 class SettingsDialog(QDialog):
     theme_preview_requested = pyqtSignal(str)
+    bilibili_login_requested = pyqtSignal()
 
     def __init__(self, config: dict, profiles: list[dict] | None = None, parent=None):
         super().__init__(parent)
@@ -55,6 +56,15 @@ class SettingsDialog(QDialog):
         self.user_agent = QLineEdit(headers.get("User-Agent", ""))
         self.bilibili_cookie = QLineEdit(str(config.get("bilibili_cookie", "")))
         self.bilibili_cookie.setEchoMode(QLineEdit.EchoMode.Password)
+        self.bilibili_login_button = QPushButton("二维码登录")
+        self.bilibili_login_button.clicked.connect(self.bilibili_login_requested.emit)
+        self.bilibili_login_status = QLabel("登录后自动保存 Cookie")
+        bilibili_login_row = QHBoxLayout()
+        bilibili_login_row.addWidget(self.bilibili_login_button)
+        bilibili_login_row.addWidget(self.bilibili_login_status)
+        self.bilibili_qr = QLabel()
+        self.bilibili_qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bilibili_qr.setVisible(False)
 
         self.keywords = QTextEdit("\n".join(config.get("filter_keywords", [])))
         self.keywords.setFixedHeight(96)
@@ -88,6 +98,8 @@ class SettingsDialog(QDialog):
         general_form.addRow("Referer", self.referer)
         general_form.addRow("User-Agent", self.user_agent)
         general_form.addRow("B 站 Cookie", self.bilibili_cookie)
+        general_form.addRow("B 站登录", bilibili_login_row)
+        general_form.addRow("登录二维码", self.bilibili_qr)
         general_form.addRow("过滤关键词", self.keywords)
 
         self.appearance_tab = QWidget()
@@ -113,6 +125,25 @@ class SettingsDialog(QDialog):
         layout.addWidget(tabs)
         layout.addWidget(buttons)
         self._refresh_profiles(0)
+
+    def set_bilibili_login_status(self, message: str, enabled: bool | None = None) -> None:
+        self.bilibili_login_status.setText(message)
+        if enabled is not None:
+            self.bilibili_login_button.setEnabled(enabled)
+
+    def set_bilibili_qr(self, path: str) -> None:
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            self.bilibili_qr.clear()
+            self.bilibili_qr.setVisible(False)
+            return
+        self.bilibili_qr.setPixmap(pixmap.scaled(
+            240,
+            240,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        self.bilibili_qr.setVisible(True)
 
     def config(self) -> dict:
         config = self._config.copy()

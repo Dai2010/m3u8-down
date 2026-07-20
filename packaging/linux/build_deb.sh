@@ -22,7 +22,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: Dai2010 <noreply@github.com>
-Depends: python3 (>= 3.10), python3-requests, python3-aiohttp, python3-pyqt6, python3-textual, python3-vlc, vlc, ffmpeg
+Depends: python3 (>= 3.10), python3-requests, python3-aiohttp, python3-qrcode, python3-pil, python3-pyqt6, python3-textual, python3-vlc, vlc, ffmpeg
 Description: m3u8 downloader and ad-filtering streamer
  A self-contained m3u8 downloader and local ad-filtering stream proxy.
 CONTROL

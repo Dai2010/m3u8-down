@@ -66,6 +66,7 @@ python -m m3u8_downloader "https://example.com/video.m3u8" -o video.mp4 --thread
 python -m m3u8_downloader "https://example.com/video.m3u8" -o video.mp4 --keyword /video/adjump/ --dump-filtered filtered.m3u8
 python -m m3u8_downloader "https://www.bilibili.com/video/BV..." -o video.mp4 --page 1 --quality 80 --video-codec avc --cookie 'SESSDATA=...'
 python -m m3u8_downloader "https://www.bilibili.com/video/BV..." -o downloads --all-pages --save-danmaku
+python -m m3u8_downloader --bilibili-login
 python -m m3u8_downloader --tui
 ```
 

@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressBar, Static, TabPane, TabbedContent
 
-from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
+from ..config.manager import config_path, delete_profile, load_config, load_profiles, new_profile, save_config, save_profiles, upsert_profile
 from ..config.theme import should_use_dark_theme
 from ..core.bilibili import (
     BilibiliProvider,
@@ -21,6 +21,7 @@ from ..core.bilibili import (
     parse_bilibili_input,
 )
 from ..core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
+from ..core.bilibili_auth import BilibiliLoginError, login_bilibili_web_qr
 from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
@@ -122,6 +123,7 @@ class M3U8DownloaderTUI(App):
                         yield Button("New Profile", id="new-profile")
                         yield Button("Save Profile", id="save-profile", variant="success")
                         yield Button("Delete Profile", id="delete-profile", variant="error")
+                        yield Button("B站二维码登录", id="bilibili-login")
             with TabPane("日志", id="logs-tab"):
                 with VerticalScroll(classes="page"):
                     yield Label("运行日志", classes="section-title")
@@ -148,6 +150,8 @@ class M3U8DownloaderTUI(App):
             self._save_profile()
         elif event.button.id == "delete-profile":
             self._delete_profile()
+        elif event.button.id == "bilibili-login":
+            self.run_worker(self._login_bilibili(), exclusive=True)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "url":
@@ -316,6 +320,24 @@ class M3U8DownloaderTUI(App):
         )
         await self.proxy.start()
         self._write(f"Proxy URL: {self.proxy.get_stream_url(url)}")
+
+    async def _login_bilibili(self) -> None:
+        self._write("正在生成 B 站登录二维码")
+        try:
+            result = await asyncio.to_thread(
+                login_bilibili_web_qr,
+                config_path().parent / "bilibili-login.png",
+                status_callback=self._write_login_status,
+                show_console_qr=True,
+            )
+            self.config["bilibili_cookie"] = result.cookie
+            save_config(self.config)
+            self._write("B 站 Cookie 已保存，后续任务会自动使用")
+        except BilibiliLoginError as exc:
+            self._write(f"B 站登录失败：{exc}")
+
+    def _write_login_status(self, message: str) -> None:
+        self.call_from_thread(self._write, message)
 
     async def _stop_proxy(self) -> None:
         if self.proxy:

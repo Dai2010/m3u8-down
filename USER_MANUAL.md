@@ -298,11 +298,17 @@ CLI 支持普通 BV/av 视频页面和多 P 视频。番剧、课程、合集和
 不支持提示。需要登录权限的内容可以使用 `--cookie`，也可以在配置文件中保存
 `bilibili_cookie`。
 
+如果不方便手工复制 Cookie，可以运行 `python -m m3u8_downloader --bilibili-login`，
+程序会生成二维码并轮询登录状态，成功后自动保存登录信息。GUI 设置页和 TUI 配置页
+也提供相同的登录入口；Android 在应用内完成登录并自动保存状态。普通公开视频会先
+尝试匿名访问，只有受限内容才需要登录。
+
 ### 参数速查
 
 | 参数 | 说明 |
 | --- | --- |
 | `--cookie COOKIE` | 指定 B 站 Cookie，优先于配置文件。 |
+| `--bilibili-login` | 通过二维码登录并保存登录状态。 |
 | `--page PAGE` | 下载指定分 P，编号从 `1` 开始。 |
 | `--all-pages` | 下载全部分 P；`--output` 应指定目录。 |
 | `--quality QUALITY` | 设置最高画质 ID，例如 `80`。 |

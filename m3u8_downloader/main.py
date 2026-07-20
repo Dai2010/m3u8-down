@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .config.manager import load_config
+from .config.manager import config_path, load_config, save_config
 from .core.bilibili import (
     BilibiliProvider,
     BilibiliRequestConfig,
@@ -20,6 +20,7 @@ from .core.bilibili import (
     parse_bilibili_input,
     prepare_bilibili_request,
 )
+from .core.bilibili_auth import BilibiliLoginError, login_bilibili_web_qr
 from .core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
 from .core.direct_downloader import download_direct_media
 from .core.downloader import Downloader
@@ -58,7 +59,20 @@ def main() -> None:
     parser.add_argument("--dump-filtered", default="", help="write filtered m3u8 content to this path")
     parser.add_argument("--keep-segments", action="store_true", help="keep downloaded ts files after merge")
     parser.add_argument("--tui", action="store_true", help="open the terminal UI")
+    parser.add_argument("--bilibili-login", action="store_true", help="通过二维码登录 B 站并保存 Cookie")
     args = parser.parse_args()
+
+    if args.bilibili_login:
+        config = load_config()
+        qr_path = config_path().parent / "bilibili-login.png"
+        try:
+            result = login_bilibili_web_qr(qr_path, status_callback=print, show_console_qr=True)
+        except BilibiliLoginError as exc:
+            raise SystemExit(str(exc)) from exc
+        config["bilibili_cookie"] = result.cookie
+        save_config(config)
+        print(f"B 站 Cookie 已保存；二维码文件：{result.qr_code_path}")
+        return
 
     if args.tui or not args.url:
         _launch_tui()

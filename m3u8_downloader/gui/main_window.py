@@ -58,6 +58,7 @@ from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
 from .player import VlcPlayerWidget, VlcUnavailableError
+from .bilibili_login import BilibiliLoginWorker
 from .settings_dialog import SettingsDialog
 from .theme import apply_gui_theme
 
@@ -801,6 +802,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.config, self.profiles, self)
         dialog.theme_preview_requested.connect(lambda theme: self._preview_settings_theme(dialog, theme))
+        dialog.bilibili_login_requested.connect(lambda: self._start_bilibili_login(dialog))
         if dialog.exec():
             self.config = load_config()
             self.profiles = load_profiles(self.config)
@@ -818,6 +820,29 @@ class MainWindow(QMainWindow):
             self._append_log("Settings saved")
         else:
             self._apply_theme(self.config.get("theme", "system"), self.config.get("button_color", ""))
+
+    def _start_bilibili_login(self, dialog: SettingsDialog) -> None:
+        worker = getattr(self, "_bilibili_login_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        worker = BilibiliLoginWorker(self)
+        self._bilibili_login_worker = worker
+        dialog.set_bilibili_login_status("正在生成二维码…", enabled=False)
+        dialog.set_bilibili_qr("")
+        worker.status.connect(lambda message: dialog.set_bilibili_login_status(message))
+        worker.qr_code_ready.connect(dialog.set_bilibili_qr)
+        worker.completed.connect(lambda cookie: self._bilibili_login_completed(dialog, cookie))
+        worker.failed.connect(lambda message: self._bilibili_login_failed(dialog, message))
+        dialog.finished.connect(worker.cancel)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _bilibili_login_completed(self, dialog: SettingsDialog, cookie: str) -> None:
+        dialog.bilibili_cookie.setText(cookie)
+        dialog.set_bilibili_login_status("登录成功，保存设置后生效", enabled=True)
+
+    def _bilibili_login_failed(self, dialog: SettingsDialog, message: str) -> None:
+        dialog.set_bilibili_login_status(f"登录失败：{message}", enabled=True)
 
     def _preview_settings_theme(self, dialog: SettingsDialog, theme: str) -> None:
         self._apply_theme(theme, dialog.button_color.text())

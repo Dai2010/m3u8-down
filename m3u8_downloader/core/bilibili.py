@@ -160,7 +160,13 @@ class BilibiliRequestSession:
 
         raise BilibiliRequestError("network", "B 站请求未完成", request_url)
 
-    def request_json(self, url: str, headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+    def request_json(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        *,
+        allow_codes: frozenset[int] = frozenset(),
+    ) -> dict[str, Any]:
         response = self.request("GET", url, headers=headers)
         try:
             try:
@@ -173,11 +179,18 @@ class BilibiliRequestSession:
         if not isinstance(payload, dict):
             raise BilibiliRequestError("response", "B 站返回的 JSON 结构无效", url)
         code = int(payload.get("code", 0) or 0)
-        if code != 0:
+        if code != 0 and code not in allow_codes:
             category = "auth" if code in {-101, -400} else "api"
             message = str(payload.get("message") or "未知接口错误")
             raise BilibiliRequestError(category, f"B 站接口错误 {code}：{message}", url)
         return payload
+
+    @property
+    def has_cookie(self) -> bool:
+        return bool(self.config.cookie.strip()) or any(
+            key.lower() == "cookie" and value.strip()
+            for key, value in self.config.headers.items()
+        )
 
     def resolve_redirect(self, url: str) -> str:
         response = self.request("GET", url, stream=True)
@@ -206,7 +219,7 @@ class BilibiliRequestSession:
             return self._wbi_key
 
         nav_url = self.api_url("/x/web-interface/nav")
-        payload = self.request_json(nav_url)
+        payload = self.request_json(nav_url, allow_codes=frozenset({-101}))
         data = payload.get("data") or {}
         wbi_img = data.get("wbi_img") or {}
         img_key = _image_key(str(wbi_img.get("img_url", "")))
@@ -376,6 +389,8 @@ class BilibiliProvider:
             "qn": 0,
             "support_multi_audio": "true",
         }
+        if not self.session.has_cookie:
+            play_params["try_look"] = 1
         play_url = self.session.api_url("/x/player/wbi/playurl", self.session.sign_wbi(play_params))
         play_payload = self.session.request_json(play_url)
         play_data = play_payload.get("data") or {}
