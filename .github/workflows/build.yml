@@ -54,7 +54,10 @@ jobs:
           status=$?
           cat "$log_file"
           if [ "$status" -ne 0 ]; then
-            details="$(grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed|^> Task)' "$log_file" | tail -n 30 | paste -sd ' ' -)"
+            details="$(grep -E 'Bilibili(StreamResolver|FallbackDataSource|CookieStore)\.kt' "$log_file" | paste -sd ' ' -)"
+            if [ -z "$details" ]; then
+              details="$(grep -E '(^e: |^FAILURE:|^\* What went wrong:|^Execution failed|^> Task)' "$log_file" | tail -n 30 | paste -sd ' ' -)"
+            fi
             if [ -z "$details" ]; then
               details="$(tail -n 20 "$log_file" | paste -sd ' ' -)"
             fi
