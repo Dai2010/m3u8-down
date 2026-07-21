@@ -66,9 +66,11 @@ object BilibiliStreamResolver {
 
     fun isBilibiliPageUrl(url: String): Boolean {
         if (!isBilibiliUrl(url)) return false
-        val path = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault("")
+        val parsed = runCatching { Uri.parse(url) }.getOrNull() ?: return false
+        val host = parsed.host.orEmpty().lowercase().trimEnd('.')
+        val path = parsed.path.orEmpty()
         if (path.substringBefore('?').lowercase().endsWith(".m4s")) return false
-        return extractIdentity(url) != null
+        return extractIdentity(url) != null || host == "b23.tv" || host.endsWith(".b23.tv") || host == "bili2233.cn" || host.endsWith(".bili2233.cn") || path.startsWith("/s/")
     }
 
     fun resolvePage(
@@ -77,11 +79,12 @@ object BilibiliStreamResolver {
         client: OkHttpClient = OkHttpClient(),
         maximumQualityId: Int? = null,
     ): BilibiliResolvedStream {
-        val identity = extractIdentity(url) ?: error("未识别 B 站视频链接")
-        val requestHeaders = prepareBilibiliHeaders(url, headers, enabled = true)
-        val pageCollection = resolvePages(url, headers, client)
+        val normalizedUrl = normalizePageUrl(url, headers, client)
+        val identity = extractIdentity(normalizedUrl) ?: error("未识别 B 站视频链接")
+        val requestHeaders = prepareBilibiliHeaders(normalizedUrl, headers, enabled = true)
+        val pageCollection = resolvePages(normalizedUrl, headers, client)
         val aid = pageCollection.aid
-        val pageIndex = (Uri.parse(url).getQueryParameter("p")?.toIntOrNull() ?: 1) - 1
+        val pageIndex = (Uri.parse(normalizedUrl).getQueryParameter("p")?.toIntOrNull() ?: 1) - 1
         val page = pageCollection.pages[pageIndex.coerceIn(0, pageCollection.pages.lastIndex)]
         val cid = page.cid
         require(aid.isNotBlank() && cid.isNotBlank()) { "B 站视频缺少 aid 或 cid" }
@@ -93,8 +96,9 @@ object BilibiliStreamResolver {
         headers: Map<String, String> = emptyMap(),
         client: OkHttpClient = OkHttpClient(),
     ): BilibiliPageCollection {
-        val identity = extractIdentity(url) ?: error("未识别 B 站视频链接")
-        val requestHeaders = prepareBilibiliHeaders(url, headers, enabled = true)
+        val normalizedUrl = normalizePageUrl(url, headers, client)
+        val identity = extractIdentity(normalizedUrl) ?: error("未识别 B 站视频链接")
+        val requestHeaders = prepareBilibiliHeaders(normalizedUrl, headers, enabled = true)
         val viewParams = linkedMapOf<String, String>()
         identity.bvid?.let { viewParams["bvid"] = it }
         identity.aid?.let { viewParams["aid"] = it }
@@ -118,6 +122,19 @@ object BilibiliStreamResolver {
         }
         require(aid.isNotBlank() && pageItems.isNotEmpty()) { "B 站视频缺少 aid 或 cid" }
         return BilibiliPageCollection(aid, bvid, data.optString("title"), pageItems)
+    }
+
+    private fun normalizePageUrl(url: String, headers: Map<String, String>, client: OkHttpClient): String {
+        if (extractIdentity(url) != null) return url
+        val requestUrl = prepareBilibiliUrl(url, enabled = true)
+        val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, enabled = true)
+        val builder = Request.Builder().url(requestUrl)
+        requestHeaders.forEach { (name, value) -> if (value.isNotBlank()) builder.header(name, value) }
+        throttleBilibiliRequest(requestUrl)
+        return client.newCall(builder.build()).execute().use { response ->
+            if (!response.isSuccessful) error("B 站短链接跳转失败 HTTP ${response.code}")
+            response.request.url.toString()
+        }
     }
 
     private fun resolveTrack(

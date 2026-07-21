@@ -9,10 +9,12 @@ from m3u8_downloader.core.bilibili import (
     BilibiliTrack,
     build_bilibili_headers,
     is_bilibili_url,
+    is_bilibili_page_url,
     parse_bilibili_input,
     prepare_bilibili_request,
 )
 from m3u8_downloader.core.bilibili_auth import _cookie_from_login_url
+from m3u8_downloader.core.bilibili_stream import resolve_bilibili_playback
 
 
 class _JsonResponse:
@@ -104,9 +106,14 @@ def test_manual_bilibili_mode_adds_headers_without_rewriting_unrelated_urls():
 
 def test_bilibili_input_normalizes_short_and_page_url_kinds():
     assert parse_bilibili_input("https://b23.tv/abc").kind == "short"
+    assert is_bilibili_page_url("https://b23.tv/abc")
     video = parse_bilibili_input("https://www.bilibili.com/video/BV1mz4y1M7a6?t=8.4")
     assert video.kind == "video"
     assert video.bvid == "BV1mz4y1M7a6"
+
+
+def test_bilibili_cdn_is_not_treated_as_a_page_url():
+    assert not is_bilibili_page_url("https://xy123.bilivideo.com/video.m4s?token=secret")
 
 
 def test_api_bad_request_is_not_reported_as_authentication_failure():
@@ -178,6 +185,53 @@ def test_anonymous_play_request_uses_bbdown_try_look_parameter():
     provider.resolve("https://www.bilibili.com/video/BV1")
 
     assert "try_look=1" in http.urls[-1]
+
+
+def test_bilibili_playback_resolution_returns_dash_backup_tracks():
+    http = _SequenceHttp([
+        {
+            "code": 0,
+            "data": {
+                "aid": 1,
+                "bvid": "BV1",
+                "title": "title",
+                "pages": [{"page": 1, "cid": 2, "part": "P1", "duration": 1}],
+            },
+        },
+        {
+            "code": -101,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/" + "a" * 64 + ".png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/" + "b" * 64 + ".png",
+                },
+            },
+        },
+        {
+            "code": 0,
+            "data": {
+                "timelength": 1000,
+                "dash": {
+                    "video": [{
+                        "baseUrl": "https://video.example/video.m4s",
+                        "backupUrl": ["https://backup.example/video.m4s"],
+                        "id": 80,
+                        "codecid": 7,
+                    }],
+                    "audio": [],
+                },
+            },
+        },
+    ])
+    playback = resolve_bilibili_playback(
+        "https://www.bilibili.com/video/BV1",
+        headers={"Cookie": "SESSDATA=test"},
+        http=http,
+    )
+
+    assert playback.video.url == "https://video.example/video.m4s"
+    assert playback.video.backup_urls == ("https://backup.example/video.m4s",)
+    assert playback.audio is None
 
 
 def test_config_cookie_is_added_to_bilibili_headers_without_overwriting_explicit_cookie():

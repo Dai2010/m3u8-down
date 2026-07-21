@@ -44,10 +44,11 @@ from ..core.bilibili import (
     BilibiliSelectionPolicy,
     build_bilibili_headers,
     is_bilibili_url,
-    parse_bilibili_input,
+    is_bilibili_page_url,
     prepare_bilibili_request,
 )
 from ..core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
+from ..core.bilibili_stream import resolve_bilibili_playback
 from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
@@ -131,7 +132,7 @@ class DownloadWorker(QThread):
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Detecting media type")
                 media_info = task.media_info or detect_media_type(task.url, headers, bilibili_compat=bilibili_compat)
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Detected {media_info.display_name}")
-                if is_bilibili_url(task.url) and parse_bilibili_input(task.url).kind == "video":
+                if is_bilibili_page_url(task.url):
                     session = BilibiliRequestSession(BilibiliRequestConfig(headers=headers, cookie=headers.get("Cookie", "")))
                     manifest = BilibiliProvider(session).resolve(task.url, page=task.page)
                     options = BilibiliDownloadOptions(
@@ -231,6 +232,23 @@ class ProxyWorker(QThread):
             bilibili_compat = bool(self.config.get("bilibili_compat", False)) or is_bilibili_url(self.url)
             request_url, request_headers = prepare_bilibili_request(self.url, headers, bilibili_compat)
             media_info = self.media_info or detect_media_type(self.url, headers, bilibili_compat=bilibili_compat)
+            if is_bilibili_page_url(self.url):
+                playback = await asyncio.to_thread(resolve_bilibili_playback, self.url, headers)
+                self.stop_event = asyncio.Event()
+                self.server = ProxyServer(
+                    port=int(self.config.get("proxy_port", 8888)),
+                    headers=request_headers,
+                    bilibili_compat=True,
+                )
+                await self.server.start()
+                playback_url = self.server.get_bilibili_dash_url(
+                    playback.video,
+                    playback.audio,
+                    playback.manifest.metadata.get("duration_ms", 0),
+                )
+                self.started_url.emit(playback_url, media_info.display_name, {})
+                await self.stop_event.wait()
+                return
             if media_info.kind != MediaKind.HLS:
                 self.stop_event = asyncio.Event()
                 if is_bilibili_url(self.url) or any(key.lower() == "cookie" for key in request_headers):
@@ -295,7 +313,7 @@ class MediaDetectionWorker(QThread):
 
     def run(self) -> None:
         try:
-            if is_bilibili_url(self.url) and parse_bilibili_input(self.url).kind == "video":
+            if is_bilibili_page_url(self.url):
                 self.detected.emit(self.url, MediaInfo(MediaKind.DASH, "bilibili page", "application/dash+xml"))
             else:
                 self.detected.emit(self.url, detect_media_type(self.url, self.headers, bilibili_compat=self.bilibili_compat))
@@ -464,7 +482,7 @@ class MainWindow(QMainWindow):
             self.download_threads.value(),
             self.download_bilibili_compat.isChecked(),
         )
-        if any(is_bilibili_url(task.url) and parse_bilibili_input(task.url).kind == "video" for task in tasks):
+        if any(is_bilibili_page_url(task.url) for task in tasks):
             options_dialog = BilibiliOptionsDialog(self)
             if not options_dialog.exec():
                 return
@@ -485,7 +503,7 @@ class MainWindow(QMainWindow):
     def _choose_bilibili_pages(self, tasks: list[DownloadTask]) -> list[DownloadTask] | None:
         expanded: list[DownloadTask] = []
         for task in tasks:
-            if not (is_bilibili_url(task.url) and parse_bilibili_input(task.url).kind == "video"):
+            if not is_bilibili_page_url(task.url):
                 expanded.append(task)
                 continue
             headers = build_bilibili_headers(self.config, url=task.url)

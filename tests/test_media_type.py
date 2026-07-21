@@ -1,5 +1,6 @@
 from m3u8_downloader.core.media_type import (
     MediaKind,
+    detect_media_type,
     detect_media_type_from_body,
     detect_media_type_from_bytes,
     detect_media_type_from_content_type,
@@ -13,6 +14,12 @@ def test_detect_media_type_from_url():
     assert detect_media_type_from_url("rtsp://camera.test/live").kind == MediaKind.RTSP
     assert detect_media_type_from_url("https://cdn.test/video.mp4?token=1").kind == MediaKind.PROGRESSIVE
     assert detect_media_type_from_url("https://cdn.test/segment.m4s?token=1").kind == MediaKind.PROGRESSIVE
+
+
+def test_detect_media_type_recognizes_bilibili_page_without_fetching():
+    info = detect_media_type("https://www.bilibili.com/video/BV1mz4y1M7a6")
+    assert info.kind == MediaKind.DASH
+    assert info.source == "bilibili page"
 
 
 def test_detect_media_type_from_content_type():

@@ -190,7 +190,11 @@ fun HomeScreen(
             updateDownloadItem(downloadItems, item.id) { it.copy(detectionStatus = "正在探测媒体类型") }
             val info = withContext(Dispatchers.IO) {
                 val bilibiliCompatActive = downloadBilibiliCompatEnabled || isBilibiliUrl(item.url)
-                MediaTypeDetector.detect(item.url, mediaRequestHeaders(referer, item.url, bilibiliCompatActive, bilibiliCookie), bilibiliCompatEnabled = bilibiliCompatActive)
+                if (bilibiliCompatActive && BilibiliStreamResolver.isBilibiliPageUrl(item.url)) {
+                    MediaInfo(MediaKind.DASH, "bilibili-dash", "application/dash+xml")
+                } else {
+                    MediaTypeDetector.detect(item.url, mediaRequestHeaders(referer, item.url, bilibiliCompatActive, bilibiliCookie), bilibiliCompatEnabled = bilibiliCompatActive)
+                }
             }
             updateDownloadItem(downloadItems, item.id) {
                 it.copy(

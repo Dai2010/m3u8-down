@@ -18,9 +18,11 @@ from ..core.bilibili import (
     BilibiliSelectionPolicy,
     build_bilibili_headers,
     is_bilibili_url,
-    parse_bilibili_input,
+    is_bilibili_page_url,
+    prepare_bilibili_request,
 )
 from ..core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
+from ..core.bilibili_stream import resolve_bilibili_playback
 from ..core.bilibili_auth import BilibiliLoginError, login_bilibili_web_qr
 from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
@@ -187,7 +189,7 @@ class M3U8DownloaderTUI(App):
         try:
             await asyncio.sleep(delay)
             self.query_one("#status", Static).update("正在探测媒体类型")
-            if is_bilibili_url(url) and parse_bilibili_input(url).kind == "video":
+            if is_bilibili_page_url(url):
                 media_info = MediaInfo(MediaKind.DASH, "bilibili page", "application/dash+xml")
             else:
                 media_info = await asyncio.to_thread(detect_media_type, url, self._headers(url))
@@ -217,7 +219,7 @@ class M3U8DownloaderTUI(App):
                 return
             media_info = self.detected_media_info
             self._write(f"Detected {media_info.display_name}")
-            if is_bilibili_url(url) and parse_bilibili_input(url).kind == "video":
+            if is_bilibili_page_url(url):
                 await self._download_bilibili(url, output, headers)
                 return
             if media_info.kind == MediaKind.PROGRESSIVE:
@@ -309,14 +311,44 @@ class M3U8DownloaderTUI(App):
         headers = self._headers(url)
         media_info = self.detected_media_info
         self._write(f"Detected {media_info.display_name}")
+        if is_bilibili_page_url(url):
+            playback = await asyncio.to_thread(resolve_bilibili_playback, url, headers)
+            self.proxy = ProxyServer(
+                port=int(self.config.get("proxy_port", 8888)),
+                headers=headers,
+                bilibili_compat=True,
+            )
+            await self.proxy.start()
+            playback_url = self.proxy.get_bilibili_dash_url(
+                playback.video,
+                playback.audio,
+                playback.manifest.metadata.get("duration_ms", 0),
+            )
+            self._write(f"Proxy URL: {playback_url}")
+            return
         if media_info.kind != MediaKind.HLS:
-            self._write(f"Playback URL: {url}")
+            request_url, _request_headers = prepare_bilibili_request(
+                url,
+                headers,
+                bool(self.config.get("bilibili_compat", False)) or is_bilibili_url(url),
+            )
+            if is_bilibili_url(url) or any(key.lower() == "cookie" for key in headers):
+                self.proxy = ProxyServer(
+                    port=int(self.config.get("proxy_port", 8888)),
+                    headers=headers,
+                    bilibili_compat=True,
+                )
+                await self.proxy.start()
+                self._write(f"Proxy URL: {self.proxy.get_media_url(request_url)}")
+            else:
+                self._write(f"Playback URL: {request_url}")
             return
 
         self.proxy = ProxyServer(
             port=int(self.config.get("proxy_port", 8888)),
             headers=headers,
             filter_keywords=self._filter_keywords(),
+            bilibili_compat=bool(self.config.get("bilibili_compat", False)) or is_bilibili_url(url),
         )
         await self.proxy.start()
         self._write(f"Proxy URL: {self.proxy.get_stream_url(url)}")

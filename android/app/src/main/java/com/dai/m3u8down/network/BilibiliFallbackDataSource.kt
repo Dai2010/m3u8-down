@@ -21,8 +21,9 @@ class BilibiliFallbackDataSource(
         for (candidate in candidates.distinct()) {
             val source = httpFactory.createDataSource()
             try {
-                throttleBilibiliRequest(candidate)
-                val length = source.open(dataSpec.withUri(Uri.parse(candidate)))
+                val requestUrl = prepareBilibiliUrl(candidate, enabled = true)
+                throttleBilibiliRequest(requestUrl)
+                val length = source.open(dataSpec.withUri(Uri.parse(requestUrl)))
                 delegate = source
                 currentUri = source.uri
                 return length

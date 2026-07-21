@@ -486,7 +486,8 @@ def parse_bilibili_input(url: str) -> BilibiliInput:
         return BilibiliInput(url, "unknown")
     path = parsed.path or ""
     lowered_path = path.lower()
-    if (parsed.hostname or "").lower().endswith("b23.tv") or lowered_path.startswith("/s/"):
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if host.endswith("b23.tv") or host.endswith("bili2233.cn") or lowered_path.startswith("/s/"):
         return BilibiliInput(url, "short")
     bvid_match = re.search(r"(?i)(BV[0-9A-Za-z]+)", path)
     aid_match = re.search(r"(?i)(?:^|/)av(\d+)", path)
@@ -506,6 +507,12 @@ def parse_bilibili_input(url: str) -> BilibiliInput:
     if "cheese" in lowered_path or "course" in lowered_path:
         return BilibiliInput(url, "course")
     return BilibiliInput(url, "unknown")
+
+
+def is_bilibili_page_url(url: str) -> bool:
+    if not is_bilibili_url(url):
+        return False
+    return parse_bilibili_input(url).kind in {"video", "short"}
 
 
 def _parse_pages(raw_pages: Any) -> tuple[BilibiliPage, ...]:

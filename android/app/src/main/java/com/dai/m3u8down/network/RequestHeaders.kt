@@ -30,7 +30,10 @@ fun prepareBilibiliUrl(url: String, enabled: Boolean = false): String {
     val parsed = Uri.parse(url)
     val host = parsed.host.orEmpty().lowercase().trimEnd('.')
     if (!isBilivideoHost(host)) return url
-    return url
+    if (!parsed.scheme.equals("https", ignoreCase = true)) return url
+    if (usesAndroidPlatform(url)) return url
+    if (host.endsWith(".mcdn.bilivideo.cn") && parsed.port != -1) return url
+    return parsed.buildUpon().scheme("http").build().toString()
 }
 
 fun prepareBilibiliHeaders(url: String, headers: Map<String, String> = emptyMap(), enabled: Boolean = false): Map<String, String> {
@@ -38,6 +41,7 @@ fun prepareBilibiliHeaders(url: String, headers: Map<String, String> = emptyMap(
     if (!enabled && !isBilibiliUrl(url)) return output
     if (output.keys.none { it.equals("User-Agent", ignoreCase = true) }) output["User-Agent"] = "Mozilla/5.0"
     if (!usesAndroidPlatform(url) && output.keys.none { it.equals("Referer", ignoreCase = true) }) output["Referer"] = "https://www.bilibili.com"
+    if (isBilibiliUrl(url) && output.keys.none { it.equals("Origin", ignoreCase = true) }) output["Origin"] = "https://www.bilibili.com"
     return output
 }
 
@@ -50,7 +54,7 @@ fun mediaRequestHeaders(referer: String, url: String = "", bilibiliCompatEnabled
     return prepareBilibiliHeaders(url, base, bilibiliCompatEnabled)
 }
 
-private val BILIBILI_HOST_SUFFIXES = listOf("bilibili.com", "bilibili.tv", "bilivideo.com", "bilivideo.cn")
+private val BILIBILI_HOST_SUFFIXES = listOf("bilibili.com", "bilibili.tv", "bilivideo.com", "bilivideo.cn", "b23.tv", "bili2233.cn")
 
 private fun isBilivideoHost(host: String): Boolean =
     host == "bilivideo.com" || host.endsWith(".bilivideo.com") || host == "bilivideo.cn" || host.endsWith(".bilivideo.cn")

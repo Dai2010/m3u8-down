@@ -74,3 +74,29 @@ def test_download_direct_media_stops_after_bilibili_rate_limit(tmp_path, monkeyp
         raise AssertionError("expected DirectDownloadError")
 
     assert calls == ["http://video.bilivideo.com/video.m4s"]
+
+
+def test_download_direct_media_uses_backup_after_expired_primary(tmp_path, monkeypatch):
+    output = tmp_path / "video.m4s"
+    calls = []
+
+    def fake_get(url, headers, stream, allow_redirects, timeout):
+        calls.append(url)
+        if "primary" in url:
+            return FakeResponse(status_code=403)
+        return FakeResponse(status_code=200, chunks=(b"backup",))
+
+    monkeypatch.setattr("m3u8_downloader.core.direct_downloader.requests.get", fake_get)
+
+    assert download_direct_media(
+        "https://primary.bilivideo.com/video.m4s",
+        output,
+        retries=1,
+        backup_urls=("https://backup.bilivideo.com/video.m4s",),
+    ) is True
+
+    assert output.read_bytes() == b"backup"
+    assert calls == [
+        "http://primary.bilivideo.com/video.m4s",
+        "http://backup.bilivideo.com/video.m4s",
+    ]

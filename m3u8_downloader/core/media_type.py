@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from .bilibili import prepare_bilibili_request, throttle_bilibili_request
+from .bilibili import is_bilibili_page_url, prepare_bilibili_request, throttle_bilibili_request
 
 
 class MediaKind(str, Enum):
@@ -62,6 +62,8 @@ def detect_media_type(
     timeout: int = 10,
     bilibili_compat: bool = False,
 ) -> MediaInfo:
+    if is_bilibili_page_url(url):
+        return MediaInfo(MediaKind.DASH, "bilibili page", "application/dash+xml")
     info = detect_media_type_from_url(url)
     if info.kind != MediaKind.UNKNOWN:
         return info

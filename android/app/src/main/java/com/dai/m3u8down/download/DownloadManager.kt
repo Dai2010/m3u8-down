@@ -46,10 +46,15 @@ class DownloadManager(
         val effectiveBilibiliCompat = bilibiliCompatEnabled || isBilibiliUrl(url)
         val requestUrl = prepareBilibiliUrl(url, effectiveBilibiliCompat)
         val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, effectiveBilibiliCompat)
+        val isBilibiliPage = effectiveBilibiliCompat && BilibiliStreamResolver.isBilibiliPageUrl(url)
         emit(DownloadProgress(0, 0, "Detecting media type"))
-        val mediaInfo = detectedInfo ?: MediaTypeDetector.detect(url, requestHeaders, client, effectiveBilibiliCompat)
+        val mediaInfo = if (isBilibiliPage) {
+            MediaInfo(MediaKind.DASH, "bilibili-dash", "application/dash+xml")
+        } else {
+            detectedInfo ?: MediaTypeDetector.detect(url, requestHeaders, client, effectiveBilibiliCompat)
+        }
         emit(DownloadProgress(0, 0, "Detected ${mediaInfo.kind.displayName}"))
-        if (effectiveBilibiliCompat && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
+        if (isBilibiliPage) {
             emit(DownloadProgress(0, 2, "解析 B 站页面和分 P"))
             val stream = BilibiliStreamResolver.resolvePage(url, requestHeaders, client, bilibiliQualityId)
             val videoFile = File(cacheDir, "bilibili-video.m4s")
