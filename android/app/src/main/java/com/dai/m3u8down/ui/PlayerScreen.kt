@@ -111,9 +111,17 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
             bilibiliStream = null
             if (bilibiliCompatEnabled && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
                 status = "正在解析 B 站 DASH M4S 轨道"
-                bilibiliStream = withContext(Dispatchers.IO) {
+                val resolvedStream = withContext(Dispatchers.IO) {
                     BilibiliStreamResolver.resolvePage(url, headers)
                 }
+                val unsupportedProtocols = unsupportedExoProtocols(resolvedStream)
+                if (unsupportedProtocols.isNotEmpty()) {
+                    throw BilibiliResolverException(
+                        "unsupported_protocol",
+                        "ExoPlayer HTTP DataSource 不支持 B 站轨道协议：${unsupportedProtocols.joinToString()}",
+                    )
+                }
+                bilibiliStream = resolvedStream
                 mediaKind = MediaKind.DASH.name
                 mediaContentType = MimeTypes.APPLICATION_MPD
                 status = ""
@@ -136,6 +144,7 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
                     exc.apiCode == -101 -> "B站请求需要登录，请使用页面中的 B 站登录功能"
                     exc.apiCode != null -> "B站接口错误：${exc.message}"
                     exc.category == "auth" -> "B站鉴权失败：${exc.message}，可使用页面中的 B 站登录功能"
+                    exc.category == "unsupported_protocol" -> "${exc.message}，需要评估替代播放器"
                     else -> "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
                 }
             } else {
@@ -339,3 +348,11 @@ private fun MediaInfo.mimeType(url: String): String? {
         else -> kind.mimeType()
     }
 }
+
+private fun unsupportedExoProtocols(stream: BilibiliResolvedStream): List<String> =
+    listOfNotNull(stream.video, stream.audio)
+        .flatMap { track -> listOf(track.url) + track.backupUrls }
+        .map { url -> runCatching { Uri.parse(url).scheme?.lowercase().orEmpty() }.getOrDefault("") }
+        .map { protocol -> protocol.ifBlank { "<missing>" } }
+        .filter { protocol -> protocol !in setOf("http", "https") }
+        .distinct()
