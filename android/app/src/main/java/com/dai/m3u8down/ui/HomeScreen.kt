@@ -104,6 +104,11 @@ data class DownloadItem(
     val detectionStatus: String = "等待输入链接",
 )
 
+private data class StreamDetectionResult(
+    val mediaInfo: MediaInfo,
+    val bilibiliPages: BilibiliPageCollection? = null,
+)
+
 private fun updateDownloadItem(items: MutableList<DownloadItem>, id: Int, transform: (DownloadItem) -> DownloadItem) {
     val index = items.indexOfFirst { it.id == id }
     if (index >= 0) items[index] = transform(items[index])
@@ -172,16 +177,29 @@ fun HomeScreen(
         streamDetectionStatus = "将在 5 秒后探测媒体类型"
         delay(5000)
         streamDetectionStatus = "正在探测媒体类型"
-        val info = withContext(Dispatchers.IO) {
-            if (streamBilibiliCompatActive && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
-                MediaInfo(MediaKind.DASH, "bilibili-dash", "application/dash+xml")
-            } else {
-                MediaTypeDetector.detect(url, mediaRequestHeaders(referer, url, streamBilibiliCompatActive, bilibiliCookie), bilibiliCompatEnabled = streamBilibiliCompatActive)
+        try {
+            val result = withContext(Dispatchers.IO) {
+                val headers = mediaRequestHeaders(referer, url, streamBilibiliCompatActive, bilibiliCookie)
+                if (streamBilibiliCompatActive && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
+                    val pages = BilibiliStreamResolver.resolvePages(url, headers)
+                    StreamDetectionResult(MediaInfo(MediaKind.DASH, "bilibili-dash", "application/dash+xml"), pages)
+                } else {
+                    StreamDetectionResult(MediaTypeDetector.detect(url, headers, bilibiliCompatEnabled = streamBilibiliCompatActive))
+                }
             }
+            bilibiliPages = result.bilibiliPages
+            streamMediaInfo = result.mediaInfo
+            streamDetectedUrl = url
+            streamDetectionStatus = when {
+                result.mediaInfo.kind == MediaKind.UNKNOWN -> "未能识别媒体类型，请检查链接或请求头"
+                result.bilibiliPages != null -> "已识别：${result.mediaInfo.kind.displayName}，检测到 ${result.bilibiliPages.pages.size} 个分P"
+                else -> "已识别：${result.mediaInfo.kind.displayName}"
+            }
+        } catch (exc: Exception) {
+            streamMediaInfo = null
+            streamDetectedUrl = ""
+            streamDetectionStatus = "媒体探测失败：${exc.message ?: exc.javaClass.simpleName}"
         }
-        streamMediaInfo = info
-        streamDetectedUrl = url
-        streamDetectionStatus = if (info.kind == MediaKind.UNKNOWN) "未能识别媒体类型，请检查链接或请求头" else "已识别：${info.kind.displayName}"
     }
 
     val downloadDetectionKey = downloadItems.joinToString("|") { "${it.id}:${it.url}" }
@@ -282,11 +300,14 @@ fun HomeScreen(
         }
         scope.launch {
             try {
-                val collection = withContext(Dispatchers.IO) {
+                val collection = bilibiliPages ?: withContext(Dispatchers.IO) {
                     BilibiliStreamResolver.resolvePages(url, mediaRequestHeaders(referer, url, true, bilibiliCookie))
                 }
                 bilibiliPages = collection
-                selectedBilibiliPage = Uri.parse(url).getQueryParameter("p")?.toIntOrNull()?.coerceIn(1, collection.pages.size) ?: 1
+                val requestedPage = Uri.parse(url).getQueryParameter("p")?.toIntOrNull()
+                selectedBilibiliPage = collection.pages.firstOrNull { it.page == requestedPage }?.page
+                    ?: collection.pages.firstOrNull()?.page
+                    ?: 1
                 if (collection.pages.size > 1) {
                     screen = "bilibiliPages"
                 } else {

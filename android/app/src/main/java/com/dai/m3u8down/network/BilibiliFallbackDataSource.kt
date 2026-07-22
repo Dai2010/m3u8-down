@@ -11,7 +11,9 @@ class BilibiliFallbackDataSource(
     private val headers: Map<String, String>,
     private val fallbackUrls: Map<String, List<String>>,
 ) : BaseDataSource(false) {
-    private val httpFactory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
+    private val httpFactory = DefaultHttpDataSource.Factory()
+        .setAllowCrossProtocolRedirects(true)
+        .setDefaultRequestProperties(headers)
     private var delegate: DataSource? = null
     private var currentUri: Uri? = null
 
@@ -21,9 +23,8 @@ class BilibiliFallbackDataSource(
         for (candidate in candidates.distinct()) {
             val source = httpFactory.createDataSource()
             try {
-                val requestUrl = prepareBilibiliUrl(candidate, enabled = true)
-                throttleBilibiliRequest(requestUrl)
-                val length = source.open(dataSpec.withUri(Uri.parse(requestUrl)))
+                throttleBilibiliRequest(candidate)
+                val length = source.open(dataSpec.withUri(Uri.parse(candidate)))
                 delegate = source
                 currentUri = source.uri
                 return length
