@@ -1,4 +1,4 @@
-package com.dai.m3u8down.download
+package com.dai2010.m3u8down.download
 
 import com.dai2010.m3u8down.network.BilibiliResolvedStream
 import com.dai2010.m3u8down.network.prepareBilibiliHeaders
