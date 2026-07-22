@@ -60,10 +60,10 @@ class DownloadManager(
             val stream = BilibiliStreamResolver.resolvePage(url, requestHeaders, client, bilibiliQualityId, bilibiliPage)
             val videoFile = File(cacheDir, "bilibili-video.m4s")
             val audioFile = stream.audio?.let { File(cacheDir, "bilibili-audio.m4s") }
-            DirectDownloader(client, requestHeaders, effectiveBilibiliCompat).download(stream.video.url, videoFile, stream.video.backupUrls)
+            DirectDownloader(client, requestHeaders, effectiveBilibiliCompat, preserveBilibiliMediaUrl = true).download(stream.video.url, videoFile, stream.video.backupUrls)
             emit(DownloadProgress(1, 2, "视频轨道下载完成"))
             if (stream.audio != null && audioFile != null) {
-                DirectDownloader(client, requestHeaders, effectiveBilibiliCompat).download(stream.audio.url, audioFile, stream.audio.backupUrls)
+                DirectDownloader(client, requestHeaders, effectiveBilibiliCompat, preserveBilibiliMediaUrl = true).download(stream.audio.url, audioFile, stream.audio.backupUrls)
             }
             emit(DownloadProgress(2, 2, "正在合并 B 站音视频"))
             check(Merger.mergeBilibiliTracks(videoFile, audioFile, outputFile)) { "B 站音视频合并失败" }

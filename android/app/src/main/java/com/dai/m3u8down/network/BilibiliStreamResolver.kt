@@ -25,6 +25,8 @@ data class BilibiliResolvedStream(
     val audio: BilibiliDashTrack?,
     val durationMs: Long,
     val page: BilibiliPageInfo? = null,
+    val videoTracks: List<BilibiliDashTrack> = emptyList(),
+    val audioTracks: List<BilibiliDashTrack> = emptyList(),
 )
 
 data class BilibiliPageInfo(
@@ -179,7 +181,14 @@ object BilibiliStreamResolver {
             playData.has("duration") -> playData.optLong("duration") * 1000
             else -> 0L
         }
-        return BilibiliResolvedStream(selectedVideo, selectedAudio, durationMs, page)
+        return BilibiliResolvedStream(
+            video = selectedVideo,
+            audio = selectedAudio,
+            durationMs = durationMs,
+            page = page,
+            videoTracks = videos,
+            audioTracks = audios,
+        )
     }
 
     private fun extractIdentity(url: String): BilibiliIdentity? {

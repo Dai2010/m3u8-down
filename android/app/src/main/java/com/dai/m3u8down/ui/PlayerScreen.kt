@@ -38,13 +38,15 @@ import androidx.core.view.WindowCompat
 import com.dai2010.m3u8down.media.MediaKind
 import com.dai2010.m3u8down.media.MediaInfo
 import com.dai2010.m3u8down.media.MediaTypeDetector
-import com.dai2010.m3u8down.network.BilibiliResolvedStream
-import com.dai2010.m3u8down.network.BilibiliFallbackDataSource
+import com.dai2010.m3u8down.download.BilibiliPlaybackPreparationException
+import com.dai2010.m3u8down.download.prepareBilibiliPlayback
 import com.dai2010.m3u8down.network.BilibiliResolverException
 import com.dai2010.m3u8down.network.BilibiliStreamResolver
 import com.dai2010.m3u8down.network.mediaRequestHeaders
 import com.dai2010.m3u8down.network.throttleBilibiliRequest
 import com.dai2010.m3u8down.network.prepareBilibiliUrl
+import com.dai2010.m3u8down.network.selectBilibiliTracks
+import com.dai2010.m3u8down.network.unsupportedBilibiliProtocols
 import com.dai2010.m3u8down.parser.M3U8Parser
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -53,10 +55,8 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -102,28 +102,31 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
     var mediaKind by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf(MediaKind.UNKNOWN.name) }
     var mediaContentType by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf("") }
     var status by rememberSaveable(url, adFilterEnabled, keywords, bilibiliCompatEnabled) { mutableStateOf("正在识别媒体类型") }
-    var bilibiliStream by remember(url, referer, bilibiliCompatEnabled, bilibiliCookie) { mutableStateOf<BilibiliResolvedStream?>(null) }
 
     LaunchedEffect(url, referer, adFilterEnabled, keywords, detectedInfo, bilibiliCompatEnabled, bilibiliCookie) {
         try {
             val headers = mediaRequestHeaders(referer, url, bilibiliCompatEnabled, bilibiliCookie)
             mediaUri = ""
-            bilibiliStream = null
             if (bilibiliCompatEnabled && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
                 status = "正在解析 B 站 DASH M4S 轨道"
                 val resolvedStream = withContext(Dispatchers.IO) {
                     BilibiliStreamResolver.resolvePage(url, headers)
                 }
-                val unsupportedProtocols = unsupportedExoProtocols(resolvedStream)
+                val playableStream = selectBilibiliTracks(resolvedStream)
+                val unsupportedProtocols = unsupportedBilibiliProtocols(playableStream)
                 if (unsupportedProtocols.isNotEmpty()) {
                     throw BilibiliResolverException(
                         "unsupported_protocol",
                         "ExoPlayer HTTP DataSource 不支持 B 站轨道协议：${unsupportedProtocols.joinToString()}",
                     )
                 }
-                bilibiliStream = resolvedStream
-                mediaKind = MediaKind.DASH.name
-                mediaContentType = MimeTypes.APPLICATION_MPD
+                status = "正在下载并封装 B 站 M4S 轨道（首次播放需要等待）"
+                val localPlaybackFile = withContext(Dispatchers.IO) {
+                    prepareBilibiliPlayback(context.cacheDir, playableStream, headers)
+                }
+                mediaUri = localPlaybackFile.toURI().toString()
+                mediaKind = MediaKind.PROGRESSIVE.name
+                mediaContentType = MimeTypes.VIDEO_MP4
                 status = ""
                 return@LaunchedEffect
             }
@@ -145,58 +148,31 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
                     exc.apiCode != null -> "B站接口错误：${exc.message}"
                     exc.category == "auth" -> "B站鉴权失败：${exc.message}，可使用页面中的 B 站登录功能"
                     exc.category == "unsupported_protocol" -> "${exc.message}，需要评估替代播放器"
+                    exc.category == "unsupported_codec" -> "${exc.message}，需要切换播放器或降低画质"
                     else -> "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
                 }
+            } else if (exc is BilibiliPlaybackPreparationException) {
+                "B站 M4S 封装失败：${exc.message}"
             } else {
                 "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
             }
         }
     }
 
-    val player = remember(mediaUri, bilibiliStream, referer, mediaKind, mediaContentType, bilibiliCompatEnabled, bilibiliCookie) {
-        val stream = bilibiliStream
-        if (mediaUri.isBlank() && stream == null) return@remember null
+    val player = remember(mediaUri, referer, mediaKind, mediaContentType, bilibiliCompatEnabled, bilibiliCookie) {
+        if (mediaUri.isBlank()) return@remember null
         val requestHeaders = mediaRequestHeaders(referer, url, bilibiliCompatEnabled, bilibiliCookie)
-        val dataSourceFactory: DataSource.Factory = if (stream != null) {
-            BilibiliFallbackDataSource.Factory(
-                requestHeaders,
-                buildMap {
-                    put(stream.video.url, stream.video.backupUrls)
-                    stream.audio?.let { put(it.url, it.backupUrls) }
-                },
-            )
-        } else {
-            val httpFactory = DefaultHttpDataSource.Factory()
-            httpFactory.setDefaultRequestProperties(requestHeaders)
-            DefaultDataSource.Factory(context, httpFactory)
-        }
+        val httpFactory = DefaultHttpDataSource.Factory()
+        httpFactory.setDefaultRequestProperties(requestHeaders)
+        val dataSourceFactory = DefaultDataSource.Factory(context, httpFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         ExoPlayer.Builder(context).build().apply {
-            if (stream != null) {
-                val videoItem = MediaItem.Builder()
-                    .setUri(stream.video.url)
-                    .setMimeType(MimeTypes.VIDEO_MP4)
-                    .build()
-                val videoSource = mediaSourceFactory.createMediaSource(videoItem)
-                val audio = stream.audio
-                if (audio == null) {
-                    setMediaSource(videoSource)
-                } else {
-                    val audioItem = MediaItem.Builder()
-                        .setUri(audio.url)
-                        .setMimeType(MimeTypes.AUDIO_MP4)
-                        .build()
-                    val audioSource = mediaSourceFactory.createMediaSource(audioItem)
-                    setMediaSource(MergingMediaSource(videoSource, audioSource))
-                }
-            } else {
-                val kind = runCatching { MediaKind.valueOf(mediaKind) }.getOrDefault(MediaKind.UNKNOWN)
-                val item = MediaItem.Builder()
-                    .setUri(mediaUri)
-                    .setMimeType(MediaInfo(kind, contentType = mediaContentType).mimeType(mediaUri))
-                    .build()
-                setMediaSource(mediaSourceFactory.createMediaSource(item))
-            }
+            val kind = runCatching { MediaKind.valueOf(mediaKind) }.getOrDefault(MediaKind.UNKNOWN)
+            val item = MediaItem.Builder()
+                .setUri(mediaUri)
+                .setMimeType(MediaInfo(kind, contentType = mediaContentType).mimeType(mediaUri))
+                .build()
+            setMediaSource(mediaSourceFactory.createMediaSource(item))
             prepare()
             seekTo(playbackPosition)
             playWhenReady = shouldPlay
@@ -348,11 +324,3 @@ private fun MediaInfo.mimeType(url: String): String? {
         else -> kind.mimeType()
     }
 }
-
-private fun unsupportedExoProtocols(stream: BilibiliResolvedStream): List<String> =
-    listOfNotNull(stream.video, stream.audio)
-        .flatMap { track -> listOf(track.url) + track.backupUrls }
-        .map { url -> runCatching { Uri.parse(url).scheme?.lowercase().orEmpty() }.getOrDefault("") }
-        .map { protocol -> protocol.ifBlank { "<missing>" } }
-        .filter { protocol -> protocol !in setOf("http", "https") }
-        .distinct()

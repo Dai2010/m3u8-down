@@ -18,6 +18,7 @@ class DirectDownloader(
     private val client: OkHttpClient,
     private val headers: Map<String, String> = emptyMap(),
     private val bilibiliCompatEnabled: Boolean = false,
+    private val preserveBilibiliMediaUrl: Boolean = false,
 ) {
     suspend fun download(url: String, outputFile: File, backupUrls: List<String> = emptyList(), retries: Int = 3): File = withContext(Dispatchers.IO) {
         outputFile.parentFile?.mkdirs()
@@ -28,7 +29,11 @@ class DirectDownloader(
             for (source in sources) {
                 try {
                     val enabled = bilibiliCompatEnabled || isBilibiliUrl(source)
-                    val requestUrl = prepareBilibiliUrl(source, enabled)
+                    val requestUrl = if (preserveBilibiliMediaUrl && isBilibiliUrl(source)) {
+                        source
+                    } else {
+                        prepareBilibiliUrl(source, enabled)
+                    }
                     val requestHeaders = prepareBilibiliHeaders(requestUrl, headers, enabled).toMutableMap()
                     val partSize = if (part.exists()) part.length() else 0L
                     if (partSize > 0L) requestHeaders["Range"] = "bytes=$partSize-"
