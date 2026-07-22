@@ -106,6 +106,7 @@ def merge_bilibili_tracks(
         command.extend(["-metadata", f"comment={description}"])
     if chapter_input_index >= 0:
         command.extend(["-map_chapters", str(chapter_input_index)])
+    command.extend(["-movflags", "faststart", "-strict", "unofficial", "-strict", "-2", "-f", "mp4"])
     command.append(str(output_path))
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False)

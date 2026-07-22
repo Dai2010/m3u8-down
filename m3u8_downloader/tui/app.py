@@ -32,7 +32,7 @@ from ..core.media_type import MediaInfo, MediaKind, detect_media_type
 from ..core.merger import merge_to_mp4
 from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
-from ..main import _load_media_playlist
+from ..main import _load_media_playlist, _parse_bilibili_page_spec
 
 
 class M3U8DownloaderTUI(App):
@@ -93,7 +93,7 @@ class M3U8DownloaderTUI(App):
                     yield Input(placeholder="Media URL", id="url")
                     yield Button("立即探测（回车也可）", id="detect")
                     yield Input(value="", placeholder="Output path; blank uses URL extension", id="output")
-                    yield Input(value="", placeholder="B站分P编号；留空默认 P1", id="bilibili-page")
+                    yield Input(value="", placeholder="B站分P编号；支持 2、1,2 或 1-3", id="bilibili-page")
                     yield Input(value="", placeholder="B站最高画质 ID；留空自动", id="bilibili-quality")
                     yield Input(value="yes", placeholder="下载字幕 yes/no", id="bilibili-subtitles")
                     yield Input(value="yes", placeholder="保存封面 yes/no", id="bilibili-cover")
@@ -265,9 +265,7 @@ class M3U8DownloaderTUI(App):
             provider = BilibiliProvider(session)
             collection = await asyncio.to_thread(provider.describe, url)
             page_text = self.query_one("#bilibili-page", Input).value.strip()
-            page = int(page_text) if page_text else 1
-            if page < 1 or page > len(collection.pages):
-                raise ValueError(f"分 P 编号必须在 1 到 {len(collection.pages)} 之间")
+            selected_pages = _parse_bilibili_page_spec(page_text or "1", collection.pages)
             if len(collection.pages) > 1 and not page_text:
                 self._write("B 站多 P：")
                 self._write("；".join(f"P{item.page} {item.title}" for item in collection.pages))
@@ -284,16 +282,20 @@ class M3U8DownloaderTUI(App):
                 save_chapters=self.query_one("#bilibili-chapters", Input).value.strip().lower() in yes,
                 save_info=self.query_one("#bilibili-info", Input).value.strip().lower() in yes,
             )
-            manifest = await asyncio.to_thread(provider.resolve, url, page)
-            await asyncio.to_thread(
-                download_bilibili_manifest,
-                manifest,
-                output,
-                session,
-                options,
-                lambda done, total, message: self._write(message),
-            )
-            self._write(f"Saved {output}")
+            page_map = {item.page: item for item in collection.pages}
+            for page_number in selected_pages:
+                page = page_map[page_number]
+                target = output if len(selected_pages) == 1 else output.with_name(f"{output.stem}-P{page_number:02d}{output.suffix or '.mp4'}")
+                manifest = await asyncio.to_thread(provider.resolve, url, page_number)
+                await asyncio.to_thread(
+                    download_bilibili_manifest,
+                    manifest,
+                    target,
+                    session,
+                    options,
+                    lambda done, total, message: self._write(message),
+                )
+                self._write(f"Saved {target}")
         except Exception as exc:  # noqa: BLE001 - TUI displays concise failures.
             self._write(f"B 站下载失败：{exc}")
 

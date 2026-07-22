@@ -2,7 +2,8 @@ import sys
 
 import m3u8_downloader.main as main_module
 from m3u8_downloader.core.media_type import MediaInfo, MediaKind
-from m3u8_downloader.main import _load_media_playlist
+from m3u8_downloader.core.bilibili import BilibiliPage
+from m3u8_downloader.main import _load_media_playlist, _parse_bilibili_page_spec
 
 
 class FakeResponse:
@@ -98,3 +99,12 @@ def test_main_downloads_stream_manifests_with_ffmpeg(monkeypatch, tmp_path, caps
 def test_default_output_uses_direct_media_extension():
     assert main_module._default_output_for_url("https://cdn.test/movie.webm?token=1") == "video.webm"
     assert main_module._default_output_for_url("https://cdn.test/master.m3u8") == "video.mp4"
+
+
+def test_bilibili_page_spec_supports_single_multiple_range_and_all():
+    pages = tuple(BilibiliPage(index, str(index), f"P{index}", 0) for index in range(1, 5))
+
+    assert _parse_bilibili_page_spec("2", pages) == [2]
+    assert _parse_bilibili_page_spec("1,3,3", pages) == [1, 3]
+    assert _parse_bilibili_page_spec("2-4", pages) == [2, 3, 4]
+    assert _parse_bilibili_page_spec("ALL", pages) == [1, 2, 3, 4]

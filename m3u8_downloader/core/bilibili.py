@@ -22,6 +22,7 @@ BILIBILI_HOST_SUFFIXES = (
 DEFAULT_BILIBILI_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
 DEFAULT_BILIBILI_REFERER = "https://www.bilibili.com"
 DEFAULT_BILIBILI_API_HOST = "api.bilibili.com"
+BILIBILI_BACKUP_HOST = "upos-sz-mirrorcoso1.bilivideo.com"
 DEFAULT_BILIBILI_REQUEST_INTERVAL = 0.4
 TRANSIENT_HTTP_STATUS = {408, 425, 500, 502, 503, 504}
 WBI_MIXIN_KEY_TABLE = (
@@ -415,8 +416,10 @@ class BilibiliProvider:
     def resolve(self, url: str, page: int | None = None) -> BilibiliMediaManifest:
         collection = self.describe(url)
         normalized_url = collection.source_url
-        selected_index = (page - 1) if page and page > 0 else _query_page(normalized_url) - 1
-        selected_page = collection.pages[min(max(selected_index, 0), len(collection.pages) - 1)]
+        requested_page = page if page and page > 0 else _query_page(normalized_url)
+        selected_page = next((item for item in collection.pages if item.page == requested_page), None)
+        if selected_page is None:
+            raise BilibiliProviderError(f"B 站页面没有分 P {requested_page}")
         aid = collection.aid
         play_params = {
             "avid": aid,
@@ -536,11 +539,19 @@ def _parse_tracks(raw_tracks: Any, track_type: str) -> list[BilibiliTrack]:
     for item in raw_tracks:
         if not isinstance(item, dict):
             continue
-        url = str(item.get("base_url") or item.get("baseUrl") or "")
-        if not url:
+        base_url = str(item.get("base_url") or item.get("baseUrl") or "")
+        if not base_url:
             continue
         backups = item.get("backup_url") or item.get("backupUrl") or []
         backup_urls = tuple(str(value) for value in backups if value) if isinstance(backups, list) else ()
+        source_urls = tuple(dict.fromkeys((base_url, *backup_urls)))
+        preferred_url = next((candidate for candidate in source_urls if not _has_explicit_port(candidate)), source_urls[0])
+        url = _replace_pcdn_host(preferred_url)
+        backup_urls = tuple(
+            _replace_pcdn_host(candidate)
+            for candidate in source_urls
+            if candidate != preferred_url
+        )
         tracks.append(
             BilibiliTrack(
                 url=url,
@@ -693,7 +704,24 @@ def _keep_https_for_host(parsed) -> bool:
         port = parsed.port
     except ValueError:
         port = None
-    return host.endswith(".mcdn.bilivideo.cn") and port is not None
+    return ("-cmcc" in host) or (host.endswith(".mcdn.bilivideo.cn") and port is not None)
+
+
+def _has_explicit_port(url: str) -> bool:
+    try:
+        return urlsplit(url).port is not None
+    except ValueError:
+        return False
+
+
+def _replace_pcdn_host(url: str) -> str:
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme.lower() not in {"http", "https"} or parsed.port is None:
+            return url
+    except ValueError:
+        return url
+    return urlunsplit((parsed.scheme, BILIBILI_BACKUP_HOST, parsed.path, parsed.query, parsed.fragment))
 
 
 def _uses_android_platform(url: str) -> bool:

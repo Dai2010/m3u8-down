@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="m3u8-downloader",
-    version="5.0.0",
+    version="5.0.1",
     packages=find_packages(),
     install_requires=["requests>=2.31.0", "aiohttp>=3.9.0", "textual>=0.80.0"],
     extras_require={"desktop": ["PyQt6>=6.6.0", "python-vlc>=3.0.20123"]},

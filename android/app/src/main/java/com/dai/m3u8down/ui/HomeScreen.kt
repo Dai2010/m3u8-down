@@ -130,6 +130,7 @@ fun HomeScreen(
     var downloadBilibiliCompatEnabled by rememberSaveable { mutableStateOf(false) }
     var downloadKeywords by rememberSaveable { mutableStateOf(DEFAULT_FILTER_KEYWORDS_TEXT) }
     var threadText by rememberSaveable { mutableStateOf("8") }
+    var bilibiliPageText by rememberSaveable { mutableStateOf("") }
     var bilibiliQualityText by rememberSaveable { mutableStateOf("") }
     var bilibiliSaveSubtitles by rememberSaveable { mutableStateOf(true) }
     var bilibiliSaveCover by rememberSaveable { mutableStateOf(true) }
@@ -371,6 +372,8 @@ fun HomeScreen(
             bilibiliCookie = bilibiliCookie,
             onBilibiliCookieChange = { value -> bilibiliCookie = value; BilibiliCookieStore.save(context, value) },
             onBilibiliLogin = { bilibiliLoginReturnScreen = "download"; screen = "bilibiliLogin" },
+            bilibiliPageText = bilibiliPageText,
+            onBilibiliPageChange = { bilibiliPageText = it.filter(Char::isDigit).take(3) },
             bilibiliQualityText = bilibiliQualityText,
             onBilibiliQualityChange = { bilibiliQualityText = it.filter(Char::isDigit).take(3) },
             bilibiliSaveSubtitles = bilibiliSaveSubtitles,
@@ -406,6 +409,15 @@ fun HomeScreen(
                         status = "存在未识别的媒体链接，请检查链接或请求头"
                         return@launch
                     }
+                    val bilibiliPage = bilibiliPageText.toIntOrNull()
+                    if (bilibiliPageText.isNotBlank() && bilibiliPage == null) {
+                        status = "B站分P编号必须是正整数"
+                        return@launch
+                    }
+                    if (bilibiliPage != null && bilibiliPage < 1) {
+                        status = "B站分P编号必须从 1 开始"
+                        return@launch
+                    }
                     try {
                         val manager = DownloadManager()
                         val batchCache = File(context.cacheDir, "segments/batch-${System.currentTimeMillis()}")
@@ -420,7 +432,7 @@ fun HomeScreen(
                                 finalOutput.parentFile?.mkdirs()
                                 val bilibiliCompatActive = downloadBilibiliCompatEnabled || isBilibiliUrl(item.url)
                                 val headers = mediaRequestHeaders(referer, item.url, bilibiliCompatActive, bilibiliCookie)
-                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads, item.mediaInfo, bilibiliCompatActive, bilibiliQualityText.toIntOrNull(), bilibiliSaveSubtitles, bilibiliSaveCover, bilibiliSaveDanmaku, bilibiliSaveChapters, bilibiliSaveInfo).collect { update ->
+                                manager.download(item.url, finalOutput, taskCache, headers, filterWords, threads, item.mediaInfo, bilibiliCompatActive, bilibiliQualityText.toIntOrNull(), bilibiliPage, bilibiliSaveSubtitles, bilibiliSaveCover, bilibiliSaveDanmaku, bilibiliSaveChapters, bilibiliSaveInfo).collect { update ->
                                     status = "${index + 1}/${tasks.size} ${update.message}"
                                     progress = if (update.total == 0) 0f else update.done.toFloat() / update.total.toFloat()
                                 }
@@ -683,7 +695,7 @@ private fun StreamScreen(url: String, onUrlChange: (String) -> Unit, referer: St
 }
 
 @Composable
-private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, onBilibiliLogin: () -> Unit, bilibiliQualityText: String, onBilibiliQualityChange: (String) -> Unit, bilibiliSaveSubtitles: Boolean, onBilibiliSaveSubtitlesChange: (Boolean) -> Unit, bilibiliSaveCover: Boolean, onBilibiliSaveCoverChange: (Boolean) -> Unit, bilibiliSaveDanmaku: Boolean, onBilibiliSaveDanmakuChange: (Boolean) -> Unit, bilibiliSaveChapters: Boolean, onBilibiliSaveChaptersChange: (Boolean) -> Unit, bilibiliSaveInfo: Boolean, onBilibiliSaveInfoChange: (Boolean) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
+private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadItem) -> Unit, onAddItem: () -> Unit, onRemoveItem: (DownloadItem) -> Unit, referer: String, onRefererChange: (String) -> Unit, adFilterEnabled: Boolean, onAdFilterEnabledChange: (Boolean) -> Unit, bilibiliCompatEnabled: Boolean, onBilibiliCompatEnabledChange: (Boolean) -> Unit, keywords: String, onKeywordsChange: (String) -> Unit, bilibiliCookie: String, onBilibiliCookieChange: (String) -> Unit, onBilibiliLogin: () -> Unit, bilibiliPageText: String, onBilibiliPageChange: (String) -> Unit, bilibiliQualityText: String, onBilibiliQualityChange: (String) -> Unit, bilibiliSaveSubtitles: Boolean, onBilibiliSaveSubtitlesChange: (Boolean) -> Unit, bilibiliSaveCover: Boolean, onBilibiliSaveCoverChange: (Boolean) -> Unit, bilibiliSaveDanmaku: Boolean, onBilibiliSaveDanmakuChange: (Boolean) -> Unit, bilibiliSaveChapters: Boolean, onBilibiliSaveChaptersChange: (Boolean) -> Unit, bilibiliSaveInfo: Boolean, onBilibiliSaveInfoChange: (Boolean) -> Unit, threadText: String, onThreadTextChange: (String) -> Unit, savePath: String, status: String, progress: Float, onChooseSavePath: () -> Unit, onPreview: (DownloadItem) -> Unit, onDownload: () -> Unit, onBack: () -> Unit) {
     var advancedExpanded by rememberSaveable { mutableStateOf(false) }
     FormScreen("下载", onBack) {
         items.forEach { item ->
@@ -710,6 +722,7 @@ private fun DownloadScreen(items: List<DownloadItem>, onItemChange: (DownloadIte
                     Button(onClick = onBilibiliLogin) { Text("登录") }
                 }
             }
+            LabeledField("B站分P编号，留空默认 P1") { OutlinedTextField(bilibiliPageText, onBilibiliPageChange, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) }
             LabeledField("B站最高画质 ID，留空自动") { OutlinedTextField(bilibiliQualityText, onBilibiliQualityChange, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()) }
             OptionSwitch("下载并封装字幕", bilibiliSaveSubtitles, onBilibiliSaveSubtitlesChange)
             OptionSwitch("保存封面", bilibiliSaveCover, onBilibiliSaveCoverChange)

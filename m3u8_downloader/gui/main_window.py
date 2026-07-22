@@ -11,6 +11,7 @@ from PyQt6.QtCore import QPointF, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -352,10 +353,11 @@ class BilibiliPageSelectionDialog(QDialog):
         self.resize(520, 360)
         self.pages = pages
         self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
         for page in pages:
             self.list_widget.addItem(f"P{page.page}  {page.title or '未命名'}")
         if pages:
-            self.list_widget.setCurrentRow(0)
+            self.list_widget.item(0).setSelected(True)
         self.all_pages = QCheckBox("下载全部分 P")
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(title or "B 站视频"))
@@ -369,8 +371,8 @@ class BilibiliPageSelectionDialog(QDialog):
     def selected_pages(self) -> list[int]:
         if self.all_pages.isChecked():
             return [page.page for page in self.pages]
-        current = self.list_widget.currentRow()
-        return [self.pages[current].page] if 0 <= current < len(self.pages) else []
+        selected_rows = sorted(index.row() for index in self.list_widget.selectedIndexes())
+        return [self.pages[row].page for row in selected_rows if 0 <= row < len(self.pages)]
 
 
 class BilibiliOptionsDialog(QDialog):

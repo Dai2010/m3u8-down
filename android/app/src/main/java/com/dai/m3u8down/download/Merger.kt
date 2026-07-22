@@ -17,6 +17,7 @@ object Merger {
         if (audioFile != null) command += listOf("-map", "1:a:0")
         command += listOf("-c:v", "copy")
         if (audioFile != null) command += listOf("-c:a", "copy")
+        command += listOf("-movflags", "faststart", "-strict", "unofficial", "-strict", "-2", "-f", "mp4")
         command += outputFile.absolutePath
         val session = FFmpegKit.executeWithArguments(command.toTypedArray())
         ReturnCode.isSuccess(session.returnCode)

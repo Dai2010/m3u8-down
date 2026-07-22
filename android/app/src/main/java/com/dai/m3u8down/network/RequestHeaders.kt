@@ -31,6 +31,7 @@ fun prepareBilibiliUrl(url: String, enabled: Boolean = false): String {
     val host = parsed.host.orEmpty().lowercase().trimEnd('.')
     if (!isBilivideoHost(host)) return url
     if (!parsed.scheme.equals("https", ignoreCase = true)) return url
+    if (host.contains("-cmcc")) return url
     if (usesAndroidPlatform(url)) return url
     if (host.endsWith(".mcdn.bilivideo.cn") && parsed.port != -1) return url
     return parsed.buildUpon().scheme("http").build().toString()

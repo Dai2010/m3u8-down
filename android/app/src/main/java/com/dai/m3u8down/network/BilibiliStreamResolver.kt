@@ -50,6 +50,7 @@ class BilibiliResolverException(
 
 object BilibiliStreamResolver {
     private const val API_HOST = "api.bilibili.com"
+    private const val BACKUP_HOST = "upos-sz-mirrorcoso1.bilivideo.com"
     private const val WBI_KEY_TTL_MS = 10 * 60 * 1000L
     private val mixinKeyEncTab = intArrayOf(
         46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
@@ -78,14 +79,16 @@ object BilibiliStreamResolver {
         headers: Map<String, String> = emptyMap(),
         client: OkHttpClient = OkHttpClient(),
         maximumQualityId: Int? = null,
+        pageNumber: Int? = null,
     ): BilibiliResolvedStream {
         val normalizedUrl = normalizePageUrl(url, headers, client)
         val identity = extractIdentity(normalizedUrl) ?: error("未识别 B 站视频链接")
         val requestHeaders = prepareBilibiliHeaders(normalizedUrl, headers, enabled = true)
         val pageCollection = resolvePages(normalizedUrl, headers, client)
         val aid = pageCollection.aid
-        val pageIndex = (Uri.parse(normalizedUrl).getQueryParameter("p")?.toIntOrNull() ?: 1) - 1
-        val page = pageCollection.pages[pageIndex.coerceIn(0, pageCollection.pages.lastIndex)]
+        val requestedPage = pageNumber ?: Uri.parse(normalizedUrl).getQueryParameter("p")?.toIntOrNull() ?: 1
+        val page = pageCollection.pages.firstOrNull { it.page == requestedPage }
+            ?: error("B 站页面没有分 P $requestedPage")
         val cid = page.cid
         require(aid.isNotBlank() && cid.isNotBlank()) { "B 站视频缺少 aid 或 cid" }
         return resolveTrack(requestHeaders, client, aid, page, maximumQualityId)
@@ -215,7 +218,8 @@ object BilibiliStreamResolver {
                 val baseUrl = item.optString("base_url").ifBlank { item.optString("baseUrl") }
                 if (baseUrl.isBlank()) continue
                 val backups = item.optJSONArray("backup_url") ?: item.optJSONArray("backupUrl")
-                val backupUrls = buildList {
+                val sourceUrls = buildList {
+                    add(baseUrl)
                     if (backups != null) {
                         for (backupIndex in 0 until backups.length()) {
                             val backup = backups.optString(backupIndex)
@@ -223,9 +227,12 @@ object BilibiliStreamResolver {
                         }
                     }
                 }
+                val preferredUrl = sourceUrls.firstOrNull { !hasExplicitPort(it) } ?: sourceUrls.first()
+                val selectedUrl = replacePcdnHost(preferredUrl)
+                val backupUrls = sourceUrls.filter { it != preferredUrl }.map(::replacePcdnHost)
                 add(
                     BilibiliDashTrack(
-                        url = baseUrl,
+                        url = selectedUrl,
                         backupUrls = backupUrls,
                         id = item.optInt("id"),
                         bandwidth = item.optLong("bandwidth"),
@@ -254,6 +261,13 @@ object BilibiliStreamResolver {
         13 -> 1
         else -> 0
     }
+
+    private fun hasExplicitPort(url: String): Boolean = runCatching { Uri.parse(url).port != -1 }.getOrDefault(false)
+
+    private fun replacePcdnHost(url: String): String = runCatching {
+        val parsed = Uri.parse(url)
+        if (parsed.port == -1) url else parsed.buildUpon().authority(BACKUP_HOST).build().toString()
+    }.getOrDefault(url)
 
     private fun fetchJson(
         client: OkHttpClient,

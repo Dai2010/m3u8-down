@@ -41,7 +41,7 @@ def main() -> None:
     parser.add_argument("--work-dir", default="", help="directory used for downloaded ts segments")
     parser.add_argument("--header", action="append", default=[], help="HTTP header, e.g. 'Referer: https://example.com'")
     parser.add_argument("--cookie", default="", help="B 站 Cookie，优先于配置文件中的 bilibili_cookie")
-    parser.add_argument("--page", type=int, default=None, help="B 站分 P 编号，从 1 开始")
+    parser.add_argument("--page", default=None, help="B 站分 P，例如 2、1,2,10、1-10 或 ALL")
     parser.add_argument("--all-pages", action="store_true", help="下载 B 站视频的全部分 P")
     parser.add_argument("--quality", type=int, default=None, help="B 站最高画质 ID，例如 80")
     parser.add_argument("--video-codec", action="append", default=[], choices=["avc", "hevc", "av1"], help="B 站视频编码优先级，可重复指定")
@@ -195,7 +195,9 @@ def _download_bilibili_from_cli(args, config: dict, headers: dict[str, str]) -> 
             keep_intermediates=args.keep_bilibili_tracks,
         )
         for page_index in selected_pages:
-            page = collection.pages[page_index - 1]
+            page = next((item for item in collection.pages if item.page == page_index), None)
+            if page is None:
+                raise ValueError(f"分 P 编号不存在：{page_index}")
             output = _bilibili_output_path(args.output, collection.title, page.page, len(selected_pages))
             print(f"正在下载 P{page.page}: {page.title or collection.title}")
             manifest = provider.resolve(args.url, page=page.page)
@@ -214,11 +216,9 @@ def _download_bilibili_from_cli(args, config: dict, headers: dict[str, str]) -> 
         raise SystemExit(f"B 站下载失败：{exc}") from exc
 
 
-def _select_bilibili_pages(pages, requested_page: int | None, all_pages: bool) -> list[int]:
+def _select_bilibili_pages(pages, requested_page: str | None, all_pages: bool) -> list[int]:
     if requested_page is not None:
-        if requested_page < 1 or requested_page > len(pages):
-            raise ValueError(f"分 P 编号必须在 1 到 {len(pages)} 之间")
-        return [requested_page]
+        return _parse_bilibili_page_spec(requested_page, pages)
     if all_pages or len(pages) == 1:
         return [page.page for page in pages]
     print("B 站页面包含多个分 P：")
@@ -227,11 +227,37 @@ def _select_bilibili_pages(pages, requested_page: int | None, all_pages: bool) -
     if not sys.stdin.isatty():
         print("非交互终端默认选择 P1，可使用 --page 或 --all-pages 修改")
         return [pages[0].page]
-    value = input("请选择分 P 编号（默认 1）：").strip()
-    selected = int(value or "1")
-    if selected < 1 or selected > len(pages):
-        raise ValueError(f"分 P 编号必须在 1 到 {len(pages)} 之间")
-    return [selected]
+    value = input("请选择分 P 编号（可填 2、1,2 或 1-3，默认 1）：").strip()
+    return _parse_bilibili_page_spec(value or "1", pages)
+
+
+def _parse_bilibili_page_spec(value: str, pages) -> list[int]:
+    available = {page.page for page in pages}
+    normalized = value.strip().upper()
+    if normalized == "ALL":
+        return [page.page for page in pages]
+    selected: list[int] = []
+    for token in normalized.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_text, separator, end_text = token.partition("-")
+            if not separator or not start_text.isdigit() or not end_text.isdigit():
+                raise ValueError(f"无效的分 P 选择：{value}")
+            candidates = range(int(start_text), int(end_text) + 1)
+        elif token.isdigit():
+            candidates = (int(token),)
+        else:
+            raise ValueError(f"无效的分 P 选择：{value}")
+        for page_number in candidates:
+            if page_number not in available:
+                raise ValueError(f"分 P 编号必须在 1 到 {len(pages)} 之间")
+            if page_number not in selected:
+                selected.append(page_number)
+    if not selected:
+        raise ValueError("至少选择一个分 P")
+    return selected
 
 
 def _bilibili_output_path(output: str, title: str, page: int, page_count: int) -> Path:

@@ -1,6 +1,6 @@
 # m3u8-downloader 使用手册
 
-版本：`5.0.0`
+版本：`5.0.1`
 
 本工具用于下载和流播 HLS/m3u8、DASH/mpd、Smooth Streaming、RTSP 以及常见直链媒体，也支持 B 站普通视频页面和短链。
 
@@ -63,7 +63,7 @@ python -m m3u8_downloader "$BILIBILI_MEDIA_URL" -o bilibili-video.mp4
 | `--work-dir` | 指定临时工作目录。指定后目录不会由程序自动删除，便于排查失败任务。 |
 | `--header` | 增加请求头，可重复使用，例如 `--header 'Cookie: SESSDATA=...'`。命令行值覆盖同名配置。 |
 | `--cookie` | B 站 Cookie；优先于配置文件中的 `bilibili_cookie`。 |
-| `--page` | 指定 B 站分 P 编号，从 `1` 开始；未指定时交互选择，非交互运行默认选择 P1。 |
+| `--page` | 指定 B 站分 P，可填写单个编号、逗号列表、范围或 `ALL`，例如 `2`、`1,2,10`、`1-10`；未指定时交互选择，非交互运行默认选择 P1。 |
 | `--all-pages` | 下载普通 B 站视频的全部分 P；输出目录中按分 P 生成文件。 |
 | `--quality` | B 站最高画质 ID，例如 `80`；不传时自动选择。 |
 | `--video-codec` | 视频编码优先级，可重复指定 `avc`、`hevc` 或 `av1`；不传时为 AVC、HEVC、AV1。 |
@@ -313,7 +313,7 @@ CLI 支持普通 BV/av 视频页面、短链和多 P 视频。番剧、课程、
 | --- | --- |
 | `--cookie COOKIE` | 指定 B 站 Cookie，优先于配置文件。 |
 | `--bilibili-login` | 通过二维码登录并保存登录状态。 |
-| `--page PAGE` | 下载指定分 P，编号从 `1` 开始。 |
+| `--page PAGE` | 下载指定分 P，支持单个编号、逗号列表、范围或 `ALL`。 |
 | `--all-pages` | 下载全部分 P；`--output` 应指定目录。 |
 | `--quality QUALITY` | 设置最高画质 ID，例如 `80`。 |
 | `--video-codec CODEC` | 设置编码优先级，可重复使用 `avc`、`hevc`、`av1`。 |
@@ -342,7 +342,7 @@ python -m m3u8_downloader "https://www.bilibili.com/video/BV..." \
 ```
 
 未指定 `--page` 或 `--all-pages` 时，交互终端会显示分 P 选择；非交互终端默认选择
-P1。GUI 和 TUI 提供对应的分 P、画质、附件和 Cookie 设置。
+P1。GUI 和 TUI 提供对应的分 P、画质、附件和 Cookie 设置；Android 下载页可在高级选项中填写分 P 编号。
 
 ## 十、使用注意
 

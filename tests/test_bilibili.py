@@ -12,6 +12,7 @@ from m3u8_downloader.core.bilibili import (
     is_bilibili_page_url,
     parse_bilibili_input,
     prepare_bilibili_request,
+    _parse_tracks,
 )
 from m3u8_downloader.core.bilibili_auth import _cookie_from_login_url
 from m3u8_downloader.core.bilibili_stream import resolve_bilibili_playback
@@ -93,6 +94,29 @@ def test_bilibili_request_preserves_android_platform_and_mcdn_port():
     assert android_headers == {"User-Agent": "Mozilla/5.0"}
     assert mcdn_request == mcdn_url
     assert mcdn_headers == {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"}
+
+
+def test_bilibili_request_keeps_https_for_cmcc_cdn():
+    url = "https://upos-sz-mirrorali-cmcc.bilivideo.com/video.m4s?token=secret"
+
+    request_url, _headers = prepare_bilibili_request(url)
+
+    assert request_url == url
+
+
+def test_bilibili_track_prefers_backup_without_explicit_port():
+    tracks = _parse_tracks(
+        [{
+            "baseUrl": "https://upos-sz-mirrorali.bilivideo.com:443/video.m4s",
+            "backupUrl": ["https://upos-sz-mirrorali.bilivideo.com/video.m4s"],
+            "id": 80,
+            "codecid": 7,
+        }],
+        "video",
+    )
+
+    assert tracks[0].url == "https://upos-sz-mirrorali.bilivideo.com/video.m4s"
+    assert tracks[0].backup_urls == ("https://upos-sz-mirrorcoso1.bilivideo.com/video.m4s",)
 
 
 def test_manual_bilibili_mode_adds_headers_without_rewriting_unrelated_urls():

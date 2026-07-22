@@ -37,6 +37,7 @@ class DownloadManager(
         detectedInfo: MediaInfo? = null,
         bilibiliCompatEnabled: Boolean = false,
         bilibiliQualityId: Int? = null,
+        bilibiliPage: Int? = null,
         bilibiliSaveSubtitles: Boolean = true,
         bilibiliSaveCover: Boolean = true,
         bilibiliSaveDanmaku: Boolean = false,
@@ -56,7 +57,7 @@ class DownloadManager(
         emit(DownloadProgress(0, 0, "Detected ${mediaInfo.kind.displayName}"))
         if (isBilibiliPage) {
             emit(DownloadProgress(0, 2, "解析 B 站页面和分 P"))
-            val stream = BilibiliStreamResolver.resolvePage(url, requestHeaders, client, bilibiliQualityId)
+            val stream = BilibiliStreamResolver.resolvePage(url, requestHeaders, client, bilibiliQualityId, bilibiliPage)
             val videoFile = File(cacheDir, "bilibili-video.m4s")
             val audioFile = stream.audio?.let { File(cacheDir, "bilibili-audio.m4s") }
             DirectDownloader(client, requestHeaders, effectiveBilibiliCompat).download(stream.video.url, videoFile, stream.video.backupUrls)

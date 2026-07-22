@@ -283,7 +283,11 @@ class ProxyServer:
                 f'height="{max(0, track.height)}"',
             ]
         else:
-            attributes = ['contentType="audio"', 'mimeType="audio/mp4"']
+            attributes = [
+                'contentType="audio"',
+                'mimeType="audio/mp4"',
+                f'codecs="{escape(track.codecs or _track_codec(track))}"',
+            ]
             if track.language:
                 attributes.append(f'lang="{escape(track.language)}"')
             representation = [
