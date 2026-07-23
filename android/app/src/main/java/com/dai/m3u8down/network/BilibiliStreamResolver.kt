@@ -66,6 +66,9 @@ object BilibiliStreamResolver {
     @Volatile
     private var cachedWbiKeyExpiresAt = 0L
 
+    private val playTimestampLock = Any()
+    private var lastPlayTimestamp = 0L
+
     fun isBilibiliPageUrl(url: String): Boolean {
         if (!isBilibiliUrl(url)) return false
         val parsed = runCatching { Uri.parse(url) }.getOrNull() ?: return false
@@ -81,6 +84,7 @@ object BilibiliStreamResolver {
         client: OkHttpClient = OkHttpClient(),
         maximumQualityId: Int? = null,
         pageNumber: Int? = null,
+        forceRefresh: Boolean = false,
     ): BilibiliResolvedStream {
         val normalizedUrl = normalizePageUrl(url, headers, client)
         val identity = extractIdentity(normalizedUrl) ?: error("未识别 B 站视频链接")
@@ -92,7 +96,7 @@ object BilibiliStreamResolver {
             ?: error("B 站页面没有分 P $requestedPage")
         val cid = page.cid
         require(aid.isNotBlank() && cid.isNotBlank()) { "B 站视频缺少 aid 或 cid" }
-        return resolveTrack(requestHeaders, client, aid, page, maximumQualityId)
+        return resolveTrack(requestHeaders, client, aid, page, maximumQualityId, forceRefresh)
     }
 
     fun resolvePages(
@@ -147,10 +151,11 @@ object BilibiliStreamResolver {
         aid: String,
         page: BilibiliPageInfo,
         maximumQualityId: Int?,
+        forceRefresh: Boolean,
     ): BilibiliResolvedStream {
         val cid = page.cid
 
-        val wbiKey = loadWbiKey(client, requestHeaders)
+        val wbiKey = loadWbiKey(client, requestHeaders, forceRefresh)
         val playParams = linkedMapOf(
             "avid" to aid,
             "cid" to cid,
@@ -161,7 +166,7 @@ object BilibiliStreamResolver {
             "otype" to "json",
             "qn" to "0",
             "support_multi_audio" to "true",
-            "wts" to (System.currentTimeMillis() / 1000).toString(),
+            "wts" to nextPlayTimestamp(forceRefresh).toString(),
         )
         if (requestHeaders.none { (name, value) -> name.equals("Cookie", ignoreCase = true) && value.isNotBlank() }) {
             playParams["try_look"] = "1"
@@ -197,10 +202,12 @@ object BilibiliStreamResolver {
         return if (bvid.isNullOrBlank() && aid.isNullOrBlank()) null else BilibiliIdentity(bvid, aid)
     }
 
-    private fun loadWbiKey(client: OkHttpClient, headers: Map<String, String>): String {
+    private fun loadWbiKey(client: OkHttpClient, headers: Map<String, String>, forceRefresh: Boolean = false): String {
         val now = System.currentTimeMillis()
-        cachedWbiKey?.let { key ->
-            if (cachedWbiKeyExpiresAt > now) return key
+        if (!forceRefresh) {
+            cachedWbiKey?.let { key ->
+                if (cachedWbiKeyExpiresAt > now) return key
+            }
         }
         val navUrl = buildApiUrl("/x/web-interface/nav", emptyMap())
         val nav = fetchJson(client, navUrl, headers, allowAnonymous = true)
@@ -217,6 +224,17 @@ object BilibiliStreamResolver {
 
     private fun extractImageKey(url: String): String =
         url.substringAfterLast('/').substringBeforeLast('.')
+
+    private fun nextPlayTimestamp(forceRefresh: Boolean): Long = synchronized(playTimestampLock) {
+        var timestamp = System.currentTimeMillis() / 1000
+        if (forceRefresh && timestamp <= lastPlayTimestamp) {
+            val waitMs = 1000L - (System.currentTimeMillis() % 1000L)
+            if (waitMs > 0L) Thread.sleep(waitMs)
+            timestamp = System.currentTimeMillis() / 1000
+        }
+        lastPlayTimestamp = maxOf(lastPlayTimestamp, timestamp)
+        timestamp
+    }
 
     private fun parseTracks(array: JSONArray?, isAudio: Boolean): List<BilibiliDashTrack> {
         if (array == null) return emptyList()

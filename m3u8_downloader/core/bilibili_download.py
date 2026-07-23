@@ -16,7 +16,7 @@ from .bilibili import (
     BilibiliSubtitle,
     BilibiliTrack,
 )
-from .direct_downloader import download_direct_media
+from .direct_downloader import DirectDownloadError, download_direct_media
 from .merger import merge_bilibili_tracks
 
 
@@ -62,16 +62,12 @@ def download_bilibili_manifest(
     cancel_callback: CancelCallback | None = None,
 ) -> BilibiliDownloadResult:
     active_options = options or BilibiliDownloadOptions()
-    video = manifest.select_video(active_options.selection)
-    audio = manifest.select_audio(active_options.selection)
-    if video is None:
-        raise BilibiliDownloadError("B 站没有符合清晰度和编码条件的视频轨道")
     work_dir = output_path.with_name(f".{output_path.stem}.bilibili")
     work_dir.mkdir(parents=True, exist_ok=True)
     video_path = work_dir / "video.m4s"
-    audio_path = work_dir / "audio.m4s" if audio is not None else None
-    tracks = [("video", video, video_path), ("audio", audio, audio_path)]
-    tracks = [(name, track, path) for name, track, path in tracks if track is not None and path is not None]
+    audio_work_path = work_dir / "audio.m4s"
+    video, audio, tracks = _select_download_tracks(manifest, active_options, video_path, audio_work_path)
+    audio_path = audio_work_path if audio is not None else None
     progress_total = len(tracks)
     progress_done = 0
 
@@ -79,32 +75,53 @@ def download_bilibili_manifest(
         if progress_callback:
             progress_callback(progress_done, progress_total, message)
 
+    refresh_used = False
     try:
-        with ThreadPoolExecutor(max_workers=min(max(1, active_options.threads), len(tracks))) as executor:
-            futures = {
-                executor.submit(
-                    _download_track,
-                    track,
-                    path,
-                    session,
-                    active_options,
-                    cancel_callback,
-                ): name
-                for name, track, path in tracks
-            }
-            failures: list[str] = []
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    future.result()
-                except Exception as exc:  # noqa: BLE001 - combine both track failures.
-                    failures.append(f"{name}: {exc}")
-                progress_done += 1
-                report(f"已下载 {progress_done}/{progress_total} 个 B 站轨道")
-            if failures:
-                raise BilibiliDownloadError("；".join(failures))
-        if cancel_callback and cancel_callback():
-            raise BilibiliDownloadError("下载已取消，已保留临时文件以便继续")
+        while True:
+            with ThreadPoolExecutor(max_workers=min(max(1, active_options.threads), len(tracks))) as executor:
+                futures = {
+                    executor.submit(
+                        _download_track,
+                        track,
+                        path,
+                        session,
+                        active_options,
+                        cancel_callback,
+                    ): name
+                    for name, track, path in tracks
+                }
+                failures: list[str] = []
+                failure_exceptions: list[Exception] = []
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:  # noqa: BLE001 - combine both track failures.
+                        failures.append(f"{name}: {_format_download_failure(exc)}")
+                        failure_exceptions.append(exc)
+                    progress_done += 1
+                    report(f"已下载 {progress_done}/{progress_total} 个 B 站轨道")
+                if failures:
+                    expired = any(_is_expired_download(exc) for exc in failure_exceptions)
+                    if not refresh_used and expired:
+                        refreshed_manifest = BilibiliProvider(session).resolve(manifest.source_url, page=manifest.selected_page.page)
+                        if refreshed_manifest.selected_page.cid != manifest.selected_page.cid or refreshed_manifest.selected_page.page != manifest.selected_page.page:
+                            raise BilibiliDownloadError("B 站播放地址刷新后分 P 或 cid 不一致")
+                        for path in (video_path, audio_work_path):
+                            path.unlink(missing_ok=True)
+                            path.with_name(f"{path.name}.part").unlink(missing_ok=True)
+                        manifest = refreshed_manifest
+                        video, audio, tracks = _select_download_tracks(manifest, active_options, video_path, audio_work_path)
+                        audio_path = audio_work_path if audio is not None else None
+                        progress_total = len(tracks)
+                        progress_done = 0
+                        refresh_used = True
+                        report("B 站播放地址可能已过期，已刷新后重试")
+                        continue
+                    raise BilibiliDownloadError("；".join(failures))
+            if cancel_callback and cancel_callback():
+                raise BilibiliDownloadError("下载已取消，已保留临时文件以便继续")
+            break
 
         subtitle_paths = _download_subtitles(manifest.subtitles, output_path, session, active_options) if active_options.save_subtitles else []
         cover_path = _download_cover(manifest.cover_url, output_path, session) if active_options.save_cover else None
@@ -172,6 +189,25 @@ def _download_track(
         backup_urls=track.backup_urls,
         preserve_bilibili_media_url=True,
     )
+
+
+def _select_download_tracks(manifest: BilibiliMediaManifest, options: BilibiliDownloadOptions, video_path: Path, audio_path: Path):
+    video = manifest.select_video(options.selection)
+    audio = manifest.select_audio(options.selection)
+    if video is None:
+        raise BilibiliDownloadError("B 站没有符合清晰度和编码条件的视频轨道")
+    tracks = [("video", video, video_path), ("audio", audio, audio_path if audio is not None else None)]
+    return video, audio, [(name, track, path) for name, track, path in tracks if track is not None and path is not None]
+
+
+def _is_expired_download(error: Exception) -> bool:
+    return isinstance(error, DirectDownloadError) and error.status_code in {401, 403}
+
+
+def _format_download_failure(error: Exception) -> str:
+    if not isinstance(error, DirectDownloadError) or not error.attempts:
+        return str(error)
+    return f"{error}；候选诊断：" + "；".join(attempt.redacted_description() for attempt in error.attempts)
 
 
 def _download_subtitles(

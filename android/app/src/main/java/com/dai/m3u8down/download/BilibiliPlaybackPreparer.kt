@@ -15,6 +15,37 @@ suspend fun prepareBilibiliPlayback(
     cacheDir: File,
     stream: BilibiliResolvedStream,
     headers: Map<String, String>,
+    refreshStream: (suspend () -> BilibiliResolvedStream)? = null,
+): File {
+    var activeStream = stream
+    var refreshUsed = false
+    while (true) {
+        try {
+            return prepareBilibiliPlaybackOnce(cacheDir, activeStream, headers)
+        } catch (exc: BilibiliPlaybackPreparationException) {
+            val downloadFailure = exc.cause as? DirectDownloadException
+            if (!refreshUsed && refreshStream != null && (downloadFailure?.statusCode == 401 || downloadFailure?.statusCode == 403)) {
+                refreshUsed = true
+                activeStream = try {
+                    refreshStream()
+                } catch (refreshExc: Exception) {
+                    throw BilibiliPlaybackPreparationException(
+                        category = "refresh",
+                        message = "B 站播放地址刷新失败：${refreshExc.message.orEmpty()}",
+                        cause = refreshExc,
+                    )
+                }
+                continue
+            }
+            throw exc
+        }
+    }
+}
+
+private suspend fun prepareBilibiliPlaybackOnce(
+    cacheDir: File,
+    stream: BilibiliResolvedStream,
+    headers: Map<String, String>,
 ): File {
     val playbackDir = File(cacheDir, "bilibili-playback-${bilibiliPlaybackKey(stream)}")
     val outputFile = File(playbackDir, "playback.mp4")
@@ -54,9 +85,11 @@ suspend fun prepareBilibiliPlayback(
         throw exc
     } catch (exc: DirectDownloadException) {
         playbackDir.deleteRecursively()
+        val attemptSummary = exc.attempts.joinToString("；") { it.redactedDescription() }
+        val anonymousHint = if (!exc.attempts.any { it.hasCookie }) "，当前请求未携带 Cookie，匿名播放可能需要登录" else ""
         throw BilibiliPlaybackPreparationException(
             category = "download_${exc.category.name.lowercase()}",
-            message = "B 站轨道下载失败：${exc.message.orEmpty()}（HTTP ${exc.statusCode ?: "unknown"}，Content-Type ${exc.contentType ?: "unknown"}，长度 ${exc.actualBytes ?: "unknown"}）",
+            message = "B 站轨道下载失败：${exc.message.orEmpty()}（HTTP ${exc.statusCode ?: "unknown"}，Content-Type ${exc.contentType ?: "unknown"}，长度 ${exc.actualBytes ?: "unknown"}$anonymousHint）${if (attemptSummary.isBlank()) "" else "；候选诊断：$attemptSummary"}",
             cause = exc,
         )
     } catch (exc: Exception) {

@@ -1,3 +1,5 @@
+from hashlib import sha256
+
 from m3u8_downloader.core.direct_downloader import DirectDownloadError, download_direct_media
 
 
@@ -212,3 +214,68 @@ def test_download_direct_media_uses_backup_after_expired_primary(tmp_path, monke
         "http://primary.bilivideo.com/video.m4s",
         "http://backup.bilivideo.com/video.m4s",
     ]
+
+
+def test_download_direct_media_records_redacted_candidate_diagnostics(tmp_path, monkeypatch):
+    output = tmp_path / "video.m4s"
+    output.with_name("video.m4s.part").write_bytes(b"stale")
+    response_body = b"denied"
+
+    def fake_get(url, headers, stream, allow_redirects, timeout):
+        return FakeResponse(
+            status_code=403,
+            chunks=(response_body,),
+            headers={"Content-Type": "application/octet-stream", "Content-Length": str(len(response_body))},
+        )
+
+    monkeypatch.setattr("m3u8_downloader.core.direct_downloader.requests.get", fake_get)
+
+    try:
+        download_direct_media(
+            "https://cdn.example/video.m4s?token=secret",
+            output,
+            headers={"Cookie": "SESSDATA=secret"},
+            bilibili_compat=True,
+            retries=1,
+        )
+    except DirectDownloadError as exc:
+        assert len(exc.attempts) == 1
+        attempt = exc.attempts[0]
+        assert attempt.scheme == "https"
+        assert attempt.host == "cdn.example"
+        assert attempt.status_code == 403
+        assert attempt.content_type == "application/octet-stream"
+        assert attempt.expected_bytes == len(response_body)
+        assert attempt.actual_bytes == len(response_body)
+        assert attempt.resumed is True
+        assert attempt.has_cookie is True
+        assert attempt.has_range is True
+        assert attempt.response_sha256 == sha256(response_body).hexdigest()
+        description = attempt.redacted_description()
+        assert "token" not in description
+        assert "secret" not in description
+    else:
+        raise AssertionError("expected DirectDownloadError")
+
+
+def test_download_direct_media_records_548_byte_cdn_rejection(tmp_path, monkeypatch):
+    output = tmp_path / "video.m4s"
+    response_body = b"x" * 548
+
+    def fake_get(url, headers, stream, allow_redirects, timeout):
+        return FakeResponse(
+            status_code=403,
+            chunks=(response_body,),
+            headers={"Content-Type": "application/octet-stream", "Content-Length": "548"},
+        )
+
+    monkeypatch.setattr("m3u8_downloader.core.direct_downloader.requests.get", fake_get)
+
+    try:
+        download_direct_media("http://upos-sz-mirrorcoso1.bilivideo.com/video.m4s?token=secret", output, retries=1)
+    except DirectDownloadError as exc:
+        assert exc.status_code == 403
+        assert exc.attempts[0].actual_bytes == 548
+        assert exc.attempts[0].response_sha256 == sha256(response_body).hexdigest()
+    else:
+        raise AssertionError("expected DirectDownloadError")

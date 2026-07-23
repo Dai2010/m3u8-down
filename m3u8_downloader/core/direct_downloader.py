@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from time import sleep
 from collections.abc import Iterable
 import re
+from urllib.parse import urlsplit
 
 import requests
 
@@ -23,6 +26,7 @@ class DirectDownloadError(RuntimeError):
         expected_bytes: int | None = None,
         actual_bytes: int | None = None,
         resumed: bool = False,
+        attempts: tuple["DirectDownloadAttempt", ...] = (),
     ):
         self.status_code = status_code
         self.retryable = retryable
@@ -31,7 +35,51 @@ class DirectDownloadError(RuntimeError):
         self.expected_bytes = expected_bytes
         self.actual_bytes = actual_bytes
         self.resumed = resumed
+        self.attempts = attempts
         super().__init__(message)
+
+    def with_attempts(self, attempts: list["DirectDownloadAttempt"]) -> "DirectDownloadError":
+        return DirectDownloadError(
+            str(self),
+            status_code=self.status_code,
+            retryable=self.retryable,
+            category=self.category,
+            content_type=self.content_type,
+            expected_bytes=self.expected_bytes,
+            actual_bytes=self.actual_bytes,
+            resumed=self.resumed,
+            attempts=tuple(attempts),
+        )
+
+
+@dataclass(frozen=True)
+class DirectDownloadAttempt:
+    index: int
+    scheme: str
+    host: str
+    port: int | None
+    status_code: int | None
+    content_type: str
+    expected_bytes: int | None
+    actual_bytes: int | None
+    content_range: str
+    resumed: bool
+    has_cookie: bool
+    has_range: bool
+    response_sha256: str
+
+    def redacted_description(self) -> str:
+        endpoint = f"{self.scheme or '?'}://{self.host or '?'}"
+        if self.port is not None:
+            endpoint += f":{self.port}"
+        return (
+            f"#{self.index} {endpoint} status={self.status_code or 'unknown'} "
+            f"type={self.content_type or 'unknown'} length={self.expected_bytes if self.expected_bytes is not None else 'unknown'} "
+            f"actual={self.actual_bytes if self.actual_bytes is not None else 'unknown'} "
+            f"range={self.content_range or 'none'} resumed={'yes' if self.resumed else 'no'} "
+            f"cookie={'yes' if self.has_cookie else 'no'} request_range={'yes' if self.has_range else 'no'} "
+            f"sha256={self.response_sha256 or 'unknown'}"
+        )
 
 
 def download_direct_media(
@@ -54,10 +102,11 @@ def download_direct_media(
         source_urls = tuple(dict.fromkeys(variant for source in source_urls for variant in bilibili_media_url_variants(source)))
     request_url, request_headers = prepare_bilibili_request(source_urls[0], headers, bilibili_compat)
     last_error: DirectDownloadError | None = None
+    attempts: list[DirectDownloadAttempt] = []
 
     for attempt in range(max(1, retries)):
         attempt_has_retryable_error = False
-        for source_url in source_urls:
+        for source_index, source_url in enumerate(source_urls, start=1):
             try:
                 request_url, request_headers = prepare_bilibili_request(source_url, headers, bilibili_compat)
                 part_size = part_path.stat().st_size if part_path.exists() else 0
@@ -72,6 +121,17 @@ def download_direct_media(
                     with requests.get(request_url, headers=attempt_headers, stream=True, allow_redirects=True, timeout=timeout) as response:
                         response_headers = getattr(response, "headers", {}) or {}
                         if response.status_code == 416 and part_size > 0 and not clean_retry_used:
+                            summary = _summarize_response(response)
+                            attempts.append(
+                                _build_attempt(
+                                    source_index,
+                                    request_url,
+                                    response,
+                                    part_size,
+                                    attempt_headers,
+                                    summary,
+                                )
+                            )
                             part_path.unlink(missing_ok=True)
                             part_size = 0
                             attempt_headers.pop("Range", None)
@@ -79,6 +139,17 @@ def download_direct_media(
                             continue
                         if response.status_code >= 400:
                             retryable = response.status_code not in {401, 403, 404, 410, 429}
+                            summary = _summarize_response(response)
+                            attempts.append(
+                                _build_attempt(
+                                    source_index,
+                                    request_url,
+                                    response,
+                                    part_size,
+                                    attempt_headers,
+                                    summary,
+                                )
+                            )
                             raise DirectDownloadError(
                                 f"HTTP {response.status_code}: {_safe_url(request_url)}",
                                 status_code=response.status_code,
@@ -86,6 +157,7 @@ def download_direct_media(
                                 category="download_http",
                                 content_type=_header(response_headers, "Content-Type"),
                                 expected_bytes=_content_length(response_headers),
+                                actual_bytes=summary[0],
                                 resumed=part_size > 0,
                             )
                         content_type = _header(response_headers, "Content-Type")
@@ -94,13 +166,26 @@ def download_direct_media(
                         try:
                             chunk_path.unlink(missing_ok=True)
                             actual_bytes = 0
+                            digest = sha256()
                             with chunk_path.open("wb") as chunk_file:
                                 for chunk in response.iter_content(chunk_size=chunk_size):
                                     if cancel_callback and cancel_callback():
                                         raise DirectDownloadError("download cancelled")
                                     if chunk:
                                         chunk_file.write(chunk)
+                                        digest.update(chunk)
                                         actual_bytes += len(chunk)
+                            summary = (actual_bytes, digest.hexdigest())
+                            attempts.append(
+                                _build_attempt(
+                                    source_index,
+                                    request_url,
+                                    response,
+                                    part_size,
+                                    attempt_headers,
+                                    summary,
+                                )
+                            )
                             _validate_response(response, response.status_code, actual_bytes, part_size, request_url, content_type)
                             _validate_body_prefix(chunk_path, request_url, response.status_code, part_size > 0)
                             append = part_size > 0 and response.status_code == 206
@@ -130,7 +215,7 @@ def download_direct_media(
                 part_path.replace(output_path)
                 return True
             except DirectDownloadError as exc:
-                last_error = exc
+                last_error = exc.with_attempts(attempts)
                 if str(exc) == "download cancelled":
                     raise
                 if exc.status_code == 429:
@@ -231,6 +316,40 @@ def _content_length(headers) -> int | None:
         return int(value) if value else None
     except ValueError:
         return None
+
+
+def _summarize_response(response) -> tuple[int, str]:
+    digest = sha256()
+    actual_bytes = 0
+    try:
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if chunk:
+                digest.update(chunk)
+                actual_bytes += len(chunk)
+    except Exception:
+        return actual_bytes, ""
+    return actual_bytes, digest.hexdigest()
+
+
+def _build_attempt(index: int, url: str, response, part_size: int, request_headers: dict[str, str], summary: tuple[int, str]) -> DirectDownloadAttempt:
+    parsed = urlsplit(url)
+    content_type = _header(getattr(response, "headers", {}) or {}, "Content-Type").split(";", 1)[0].strip().lower()
+    port = parsed.port
+    return DirectDownloadAttempt(
+        index=index,
+        scheme=parsed.scheme,
+        host=parsed.hostname or "",
+        port=port,
+        status_code=getattr(response, "status_code", None),
+        content_type=content_type,
+        expected_bytes=_content_length(getattr(response, "headers", {}) or {}),
+        actual_bytes=summary[0],
+        content_range=_header(getattr(response, "headers", {}) or {}, "Content-Range"),
+        resumed=part_size > 0,
+        has_cookie=_has_header(request_headers, "Cookie"),
+        has_range=_has_header(request_headers, "Range"),
+        response_sha256=summary[1],
+    )
 
 
 def _header(headers, name: str) -> str:

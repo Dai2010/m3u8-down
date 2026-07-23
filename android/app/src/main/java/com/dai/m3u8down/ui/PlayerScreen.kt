@@ -109,8 +109,9 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
             mediaUri = ""
             if (bilibiliCompatEnabled && BilibiliStreamResolver.isBilibiliPageUrl(url)) {
                 status = "正在解析 B 站 DASH M4S 轨道"
+                val bilibiliClient = OkHttpClient()
                 val resolvedStream = withContext(Dispatchers.IO) {
-                    BilibiliStreamResolver.resolvePage(url, headers)
+                    BilibiliStreamResolver.resolvePage(url, headers, bilibiliClient)
                 }
                 val playableStream = selectBilibiliTracks(resolvedStream)
                 val unsupportedProtocols = unsupportedBilibiliProtocols(playableStream)
@@ -122,7 +123,25 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
                 }
                 status = "正在下载并封装 B 站 M4S 轨道（首次播放需要等待）"
                 val localPlaybackFile = withContext(Dispatchers.IO) {
-                    prepareBilibiliPlayback(context.cacheDir, playableStream, headers)
+                    prepareBilibiliPlayback(context.cacheDir, playableStream, headers) {
+                        status = "B 站播放地址可能已过期，正在刷新"
+                        val refreshedStream = BilibiliStreamResolver.resolvePage(
+                            url = url,
+                            headers = headers,
+                            client = bilibiliClient,
+                            pageNumber = playableStream.page?.page,
+                            forceRefresh = true,
+                        )
+                        val refreshedPage = refreshedStream.page
+                        val originalPage = playableStream.page
+                        if (originalPage != null && (refreshedPage?.cid != originalPage.cid || refreshedPage?.page != originalPage.page)) {
+                            throw BilibiliResolverException(
+                                "refresh",
+                                "B 站播放地址刷新后分 P 或 cid 不一致",
+                            )
+                        }
+                        selectBilibiliTracks(refreshedStream)
+                    }
                 }
                 mediaUri = localPlaybackFile.toURI().toString()
                 mediaKind = MediaKind.PROGRESSIVE.name
@@ -152,7 +171,7 @@ fun PlayerScreen(url: String, referer: String, adFilterEnabled: Boolean, keyword
                     else -> "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
                 }
             } else if (exc is BilibiliPlaybackPreparationException) {
-                "B站 M4S 封装失败：${exc.message}"
+                if (exc.category == "refresh") "B站播放地址刷新失败：${exc.message}" else "B站 M4S 封装失败：${exc.message}"
             } else {
                 "播放准备失败：${exc.message ?: exc.javaClass.simpleName}"
             }
