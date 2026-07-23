@@ -6,7 +6,6 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="m3u8 Downloader"
-        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/AppTheme">
         <activity

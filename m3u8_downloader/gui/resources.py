@@ -6,7 +6,6 @@ QLabel { color: #1e2421; font-weight: 600; }
 QLabel#title { font-size: 24px; font-weight: 800; color: __TITLE_COLOR__; }
 QLabel#subtitle { font-size: 14px; font-weight: 500; color: #5c665f; }
 QCheckBox { color: #1e2421; font-weight: 600; padding: 4px; }
-QCheckBox::indicator { width: 18px; height: 18px; background: transparent; border: 1px solid __BORDER_COLOR__; border-radius: 4px; }
 QLineEdit, QTextEdit, QSpinBox, QComboBox {
     background: #ffffff;
     color: #1e2421;
@@ -16,7 +15,7 @@ QLineEdit, QTextEdit, QSpinBox, QComboBox {
 }
 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: __BUTTON_COLOR__; }
 QComboBox QAbstractItemView { selection-background-color: __BUTTON_COLOR__; selection-color: __BUTTON_TEXT_COLOR__; }
-QCheckBox::indicator:checked { background-color: transparent; border: 2px solid __BUTTON_COLOR__; }
+QCheckBox::indicator:checked { background-color: __BUTTON_COLOR__; border: 1px solid __BUTTON_COLOR__; }
 QPlainTextEdit#playlistPreview {
     background: #fbf7ec;
     color: #26302b;
@@ -62,7 +61,6 @@ QLabel { color: #edf4ef; font-weight: 600; }
 QLabel#title { font-size: 24px; font-weight: 800; color: __TITLE_COLOR__; }
 QLabel#subtitle { font-size: 14px; font-weight: 500; color: #aebbb4; }
 QCheckBox { color: #edf4ef; font-weight: 600; padding: 4px; }
-QCheckBox::indicator { width: 18px; height: 18px; background: transparent; border: 1px solid __BORDER_COLOR__; border-radius: 4px; }
 QLineEdit, QTextEdit, QSpinBox, QComboBox {
     background: #242c28;
     color: #edf4ef;
@@ -72,7 +70,7 @@ QLineEdit, QTextEdit, QSpinBox, QComboBox {
 }
 QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus { border-color: __BUTTON_COLOR__; }
 QComboBox QAbstractItemView { selection-background-color: __BUTTON_COLOR__; selection-color: __BUTTON_TEXT_COLOR__; }
-QCheckBox::indicator:checked { background-color: transparent; border: 2px solid __BUTTON_COLOR__; }
+QCheckBox::indicator:checked { background-color: __BUTTON_COLOR__; border: 1px solid __BUTTON_COLOR__; }
 QPlainTextEdit#playlistPreview {
     background: #202820;
     color: #e8ead8;

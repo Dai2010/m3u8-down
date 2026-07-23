@@ -20,11 +20,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "Referer": "",
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
     },
-    "bilibili_cookie": "",
     "filter_keywords": DEFAULT_FILTER_KEYWORDS,
     "output_format": "mp4",
     "enable_resume": True,
-    "bilibili_compat": False,
     "proxy_port": 8888,
     "theme": "system",
     "button_color": "",
@@ -61,20 +59,9 @@ def save_config(config: dict[str, Any], path: Path | None = None) -> None:
     target = path or config_path()
     config = _normalize_config(_deep_merge(deepcopy(DEFAULT_CONFIG), config))
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{target.name}.tmp")
-    try:
-        with temporary.open("w", encoding="utf-8") as file_obj:
-            json.dump(config, file_obj, indent=2, ensure_ascii=False)
-            file_obj.write("\n")
-            file_obj.flush()
-            os.fsync(file_obj.fileno())
-        try:
-            os.chmod(temporary, 0o600)
-        except OSError:
-            pass
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
+    with target.open("w", encoding="utf-8") as file_obj:
+        json.dump(config, file_obj, indent=2, ensure_ascii=False)
+        file_obj.write("\n")
 
 
 def load_profiles(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:

@@ -6,71 +6,30 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from textual.app import App, ComposeResult
-from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressBar, Static, TabPane, TabbedContent
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Button, Footer, Header, Input, Label, Log, ProgressBar, Static
 
-from ..config.manager import config_path, delete_profile, load_config, load_profiles, new_profile, save_config, save_profiles, upsert_profile
+from ..config.manager import delete_profile, load_config, load_profiles, new_profile, save_profiles, upsert_profile
 from ..config.theme import should_use_dark_theme
-from ..core.bilibili import (
-    BilibiliProvider,
-    BilibiliRequestConfig,
-    BilibiliRequestSession,
-    BilibiliSelectionPolicy,
-    build_bilibili_headers,
-    is_bilibili_url,
-    is_bilibili_page_url,
-    prepare_bilibili_request,
-)
-from ..core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
-from ..core.bilibili_stream import resolve_bilibili_playback
-from ..core.bilibili_auth import BilibiliLoginError, login_bilibili_web_qr
 from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
 from ..core.filter import filter_playlist
-from ..core.media_type import MediaInfo, MediaKind, detect_media_type
+from ..core.media_type import MediaKind, detect_media_type
 from ..core.merger import merge_to_mp4
 from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
-from ..main import _load_media_playlist, _parse_bilibili_page_spec
+from ..main import _load_media_playlist
 
 
 class M3U8DownloaderTUI(App):
     CSS = """
-    Screen { padding: 0; }
-    TabbedContent { height: 1fr; }
-    TabPane { padding: 0; }
-    .page {
-        width: 100%;
-        height: 1fr;
-        padding: 1;
-        overflow-y: scroll;
-        scrollbar-size-vertical: 1;
-    }
-    .section-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    .hint {
-        color: $text-muted;
-        margin-bottom: 1;
-    }
-    Input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    Button {
-        width: 100%;
-        min-width: 1;
-        margin: 0 0 1 0;
-    }
-    .actions { width: 100%; height: auto; }
-    #status { margin: 1 0; }
-    #progress { margin-bottom: 1; }
-    #log { width: 100%; height: 1fr; min-height: 8; border: solid $surface; }
+    Screen { padding: 1; }
+    Input { margin-bottom: 1; }
+    Button { margin-right: 1; }
+    #log { height: 1fr; border: solid $surface; }
     """
     BINDINGS = [("q", "quit", "Quit")]
-    DETECTION_DELAY_SECONDS = 1.0
 
     def __init__(self):
         super().__init__()
@@ -79,57 +38,35 @@ class M3U8DownloaderTUI(App):
         self.profiles = load_profiles(self.config)
         self.active_profile_index = 0
         self.proxy: ProxyServer | None = None
-        self.detection_task: asyncio.Task | None = None
-        self.detected_url = ""
-        self.detected_media_info: MediaInfo | None = None
 
     def compose(self) -> ComposeResult:
         profile = self.profiles[self.active_profile_index]
         yield Header()
-        with TabbedContent(initial="download-tab"):
-            with TabPane("下载", id="download-tab"):
-                with VerticalScroll(classes="page"):
-                    yield Label("媒体下载与流播", classes="section-title")
-                    yield Input(placeholder="Media URL", id="url")
-                    yield Button("立即探测（回车也可）", id="detect")
-                    yield Input(value="", placeholder="Output path; blank uses URL extension", id="output")
-                    yield Input(value="", placeholder="B站分P编号；支持 2、1,2 或 1-3", id="bilibili-page")
-                    yield Input(value="", placeholder="B站最高画质 ID；留空自动", id="bilibili-quality")
-                    yield Input(value="yes", placeholder="下载字幕 yes/no", id="bilibili-subtitles")
-                    yield Input(value="yes", placeholder="保存封面 yes/no", id="bilibili-cover")
-                    yield Input(value="no", placeholder="保存弹幕 yes/no", id="bilibili-danmaku")
-                    yield Input(value="yes", placeholder="写入章节 yes/no", id="bilibili-chapters")
-                    yield Input(value="yes", placeholder="保存信息 JSON yes/no", id="bilibili-info")
-                    yield Input(value=self.config.get("headers", {}).get("Referer", ""), placeholder="Referer", id="referer")
-                    yield Static("输入链接后自动探测", id="status")
-                    yield ProgressBar(total=100, id="progress")
-                    with Vertical(classes="actions"):
-                        yield Button("Download", id="download", variant="primary")
-                        yield Button("Start Proxy", id="proxy", variant="success")
-                        yield Button("Stop Proxy", id="stop-proxy", variant="default")
-                    yield Label("下载、探测和代理操作均可在本页完成。", classes="hint")
-            with TabPane("配置", id="profiles-tab"):
-                with VerticalScroll(classes="page"):
-                    yield Label("Profiles", classes="section-title")
-                    yield Label("修改配置后点击保存；配置编号从 1 开始。", classes="hint")
-                    yield Input(value="1", placeholder="Profile number", id="profile-index")
-                    yield Input(value=profile.get("name", "默认配置"), placeholder="Profile name", id="profile-name")
-                    yield Input(value=", ".join(profile.get("tags", [])), placeholder="Tags, comma separated", id="profile-tags")
-                    yield Input(value=profile.get("note", ""), placeholder="Note", id="profile-note")
-                    yield Input(value="yes" if profile.get("ad_filter", False) else "no", placeholder="Ad filter yes/no", id="profile-ad-filter")
-                    yield Input(value=" | ".join(profile.get("filter_keywords", [])), placeholder="Filter keywords, separated by |", id="profile-keywords")
-                    yield Input(value=str(profile.get("threads", self.config.get("threads", 16))), placeholder="Threads", id="profile-threads")
-                    yield Input(value=profile.get("save_dir", self.config.get("save_dir", "~/Downloads")), placeholder="Save directory", id="profile-save-dir")
-                    with Vertical(classes="actions"):
-                        yield Button("Load Profile", id="load-profile")
-                        yield Button("New Profile", id="new-profile")
-                        yield Button("Save Profile", id="save-profile", variant="success")
-                        yield Button("Delete Profile", id="delete-profile", variant="error")
-                        yield Button("B站二维码登录", id="bilibili-login")
-            with TabPane("日志", id="logs-tab"):
-                with VerticalScroll(classes="page"):
-                    yield Label("运行日志", classes="section-title")
-                    yield Log(id="log")
+        with Vertical():
+            yield Input(placeholder="Media URL", id="url")
+            yield Input(value="", placeholder="Output path; blank uses URL extension", id="output")
+            yield Input(value=self.config.get("headers", {}).get("Referer", ""), placeholder="Referer", id="referer")
+            with Horizontal():
+                yield Button("Download", id="download", variant="primary")
+                yield Button("Start Proxy", id="proxy", variant="success")
+                yield Button("Stop Proxy", id="stop-proxy", variant="default")
+            yield Label("Profiles")
+            yield Input(value="1", placeholder="Profile number", id="profile-index")
+            yield Input(value=profile.get("name", "默认配置"), placeholder="Profile name", id="profile-name")
+            yield Input(value=", ".join(profile.get("tags", [])), placeholder="Tags, comma separated", id="profile-tags")
+            yield Input(value=profile.get("note", ""), placeholder="Note", id="profile-note")
+            yield Input(value="yes" if profile.get("ad_filter", False) else "no", placeholder="Ad filter yes/no", id="profile-ad-filter")
+            yield Input(value=" | ".join(profile.get("filter_keywords", [])), placeholder="Filter keywords, separated by |", id="profile-keywords")
+            yield Input(value=str(profile.get("threads", self.config.get("threads", 16))), placeholder="Threads", id="profile-threads")
+            yield Input(value=profile.get("save_dir", self.config.get("save_dir", "~/Downloads")), placeholder="Save directory", id="profile-save-dir")
+            with Horizontal():
+                yield Button("Load Profile", id="load-profile")
+                yield Button("New Profile", id="new-profile")
+                yield Button("Save Profile", id="save-profile", variant="success")
+                yield Button("Delete Profile", id="delete-profile", variant="error")
+            yield ProgressBar(total=100, id="progress")
+            yield Static("Idle", id="status")
+            yield Log(id="log")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -138,8 +75,6 @@ class M3U8DownloaderTUI(App):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "download":
             self.run_worker(self._download(), exclusive=True)
-        elif event.button.id == "detect":
-            self._start_detection()
         elif event.button.id == "proxy":
             await self._start_proxy()
         elif event.button.id == "stop-proxy":
@@ -152,56 +87,6 @@ class M3U8DownloaderTUI(App):
             self._save_profile()
         elif event.button.id == "delete-profile":
             self._delete_profile()
-        elif event.button.id == "bilibili-login":
-            self.run_worker(self._login_bilibili(), exclusive=True)
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "url":
-            self._start_detection()
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "url":
-            return
-        if self.detection_task and not self.detection_task.done():
-            self.detection_task.cancel()
-        self.detected_url = ""
-        self.detected_media_info = None
-        url = event.value.strip()
-        if not url:
-            self.query_one("#status", Static).update("请输入媒体链接")
-            return
-        self.query_one("#status", Static).update("将在 1 秒后自动探测，也可立即点击探测")
-        self.detection_task = asyncio.create_task(self._detect_after_delay(url))
-
-    def _start_detection(self) -> None:
-        if self.detection_task and not self.detection_task.done():
-            self.detection_task.cancel()
-        url = self.query_one("#url", Input).value.strip()
-        self.detected_url = ""
-        self.detected_media_info = None
-        if not url:
-            self.query_one("#status", Static).update("请输入媒体链接")
-            return
-        self.query_one("#status", Static).update("正在探测媒体类型")
-        self.detection_task = asyncio.create_task(self._detect_after_delay(url, delay=0))
-
-    async def _detect_after_delay(self, url: str, delay: float = DETECTION_DELAY_SECONDS) -> None:
-        try:
-            await asyncio.sleep(delay)
-            self.query_one("#status", Static).update("正在探测媒体类型")
-            if is_bilibili_page_url(url):
-                media_info = MediaInfo(MediaKind.DASH, "bilibili page", "application/dash+xml")
-            else:
-                media_info = await asyncio.to_thread(detect_media_type, url, self._headers(url))
-            if self.query_one("#url", Input).value.strip() != url:
-                return
-            self.detected_url = url
-            self.detected_media_info = media_info
-            self.query_one("#status", Static).update(f"已识别：{media_info.display_name}")
-        except asyncio.CancelledError:
-            return
-        except Exception as exc:  # noqa: BLE001 - TUI displays concise detection failures.
-            self.query_one("#status", Static).update(f"探测失败：{exc}")
 
     async def _download(self) -> None:
         url = self.query_one("#url", Input).value.strip()
@@ -213,15 +98,10 @@ class M3U8DownloaderTUI(App):
         output = expand_path(output_text) if output_text else self._default_output_for_url(url)
         work_dir: Path | None = None
         try:
-            headers = self._headers(url)
-            if url != self.detected_url or self.detected_media_info is None:
-                self._write("请先完成媒体探测")
-                return
-            media_info = self.detected_media_info
+            headers = self._headers()
+            self._write("Detecting media type")
+            media_info = await asyncio.to_thread(detect_media_type, url, headers)
             self._write(f"Detected {media_info.display_name}")
-            if is_bilibili_page_url(url):
-                await self._download_bilibili(url, output, headers)
-                return
             if media_info.kind == MediaKind.PROGRESSIVE:
                 self._write("Downloading direct media")
                 await asyncio.to_thread(download_direct_media, url, output, headers)
@@ -259,46 +139,6 @@ class M3U8DownloaderTUI(App):
             if work_dir and work_dir.exists():
                 shutil.rmtree(work_dir)
 
-    async def _download_bilibili(self, url: str, output: Path, headers: dict[str, str]) -> None:
-        try:
-            session = BilibiliRequestSession(BilibiliRequestConfig(headers=headers, cookie=headers.get("Cookie", "")))
-            provider = BilibiliProvider(session)
-            collection = await asyncio.to_thread(provider.describe, url)
-            page_text = self.query_one("#bilibili-page", Input).value.strip()
-            selected_pages = _parse_bilibili_page_spec(page_text or "1", collection.pages)
-            if len(collection.pages) > 1 and not page_text:
-                self._write("B 站多 P：")
-                self._write("；".join(f"P{item.page} {item.title}" for item in collection.pages))
-                self._write("未填写分 P，默认下载 P1")
-            quality_text = self.query_one("#bilibili-quality", Input).value.strip()
-            quality = int(quality_text) if quality_text else None
-            yes = {"1", "true", "yes", "y", "on", "是"}
-            options = BilibiliDownloadOptions(
-                selection=BilibiliSelectionPolicy(maximum_quality_id=quality),
-                threads=self._threads(),
-                save_subtitles=self.query_one("#bilibili-subtitles", Input).value.strip().lower() in yes,
-                save_cover=self.query_one("#bilibili-cover", Input).value.strip().lower() in yes,
-                save_danmaku=self.query_one("#bilibili-danmaku", Input).value.strip().lower() in yes,
-                save_chapters=self.query_one("#bilibili-chapters", Input).value.strip().lower() in yes,
-                save_info=self.query_one("#bilibili-info", Input).value.strip().lower() in yes,
-            )
-            page_map = {item.page: item for item in collection.pages}
-            for page_number in selected_pages:
-                page = page_map[page_number]
-                target = output if len(selected_pages) == 1 else output.with_name(f"{output.stem}-P{page_number:02d}{output.suffix or '.mp4'}")
-                manifest = await asyncio.to_thread(provider.resolve, url, page_number)
-                await asyncio.to_thread(
-                    download_bilibili_manifest,
-                    manifest,
-                    target,
-                    session,
-                    options,
-                    lambda done, total, message: self._write(message),
-                )
-                self._write(f"Saved {target}")
-        except Exception as exc:  # noqa: BLE001 - TUI displays concise failures.
-            self._write(f"B 站下载失败：{exc}")
-
     async def _start_proxy(self) -> None:
         url = self.query_one("#url", Input).value.strip()
         if not url:
@@ -307,71 +147,20 @@ class M3U8DownloaderTUI(App):
         if self.proxy:
             self._write(self.proxy.get_stream_url(url))
             return
-        if url != self.detected_url or self.detected_media_info is None:
-            self._write("请先完成媒体探测")
-            return
-        headers = self._headers(url)
-        media_info = self.detected_media_info
+        headers = self._headers()
+        media_info = await asyncio.to_thread(detect_media_type, url, headers)
         self._write(f"Detected {media_info.display_name}")
-        if is_bilibili_page_url(url):
-            playback = await asyncio.to_thread(resolve_bilibili_playback, url, headers)
-            self.proxy = ProxyServer(
-                port=int(self.config.get("proxy_port", 8888)),
-                headers=headers,
-                bilibili_compat=True,
-            )
-            await self.proxy.start()
-            playback_url = self.proxy.get_bilibili_dash_url(
-                playback.video,
-                playback.audio,
-                playback.manifest.metadata.get("duration_ms", 0),
-            )
-            self._write(f"Proxy URL: {playback_url}")
-            return
         if media_info.kind != MediaKind.HLS:
-            request_url, _request_headers = prepare_bilibili_request(
-                url,
-                headers,
-                bool(self.config.get("bilibili_compat", False)) or is_bilibili_url(url),
-            )
-            if is_bilibili_url(url) or any(key.lower() == "cookie" for key in headers):
-                self.proxy = ProxyServer(
-                    port=int(self.config.get("proxy_port", 8888)),
-                    headers=headers,
-                    bilibili_compat=True,
-                )
-                await self.proxy.start()
-                self._write(f"Proxy URL: {self.proxy.get_media_url(request_url)}")
-            else:
-                self._write(f"Playback URL: {request_url}")
+            self._write(f"Playback URL: {url}")
             return
 
         self.proxy = ProxyServer(
             port=int(self.config.get("proxy_port", 8888)),
             headers=headers,
             filter_keywords=self._filter_keywords(),
-            bilibili_compat=bool(self.config.get("bilibili_compat", False)) or is_bilibili_url(url),
         )
         await self.proxy.start()
         self._write(f"Proxy URL: {self.proxy.get_stream_url(url)}")
-
-    async def _login_bilibili(self) -> None:
-        self._write("正在生成 B 站登录二维码")
-        try:
-            result = await asyncio.to_thread(
-                login_bilibili_web_qr,
-                config_path().parent / "bilibili-login.png",
-                status_callback=self._write_login_status,
-                show_console_qr=True,
-            )
-            self.config["bilibili_cookie"] = result.cookie
-            save_config(self.config)
-            self._write("B 站 Cookie 已保存，后续任务会自动使用")
-        except BilibiliLoginError as exc:
-            self._write(f"B 站登录失败：{exc}")
-
-    def _write_login_status(self, message: str) -> None:
-        self.call_from_thread(self._write, message)
 
     async def _stop_proxy(self) -> None:
         if self.proxy:
@@ -383,8 +172,8 @@ class M3U8DownloaderTUI(App):
         await self._stop_proxy()
         self.exit()
 
-    def _headers(self, url: str = "") -> dict[str, str]:
-        headers = build_bilibili_headers(self.config, url=url)
+    def _headers(self) -> dict[str, str]:
+        headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
         referer = self.query_one("#referer", Input).value.strip()
         if referer:
             headers["Referer"] = referer

@@ -7,11 +7,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from PyQt6.QtCore import QPointF, QThread, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QPainter, QPalette, QPen
+from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
-    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -21,7 +20,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -29,74 +27,30 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSpinBox,
-    QStyle,
-    QStyleOptionButton,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from ..config.manager import load_config, load_profiles, save_config
-from ..core.bilibili import (
-    BilibiliProvider,
-    BilibiliRequestConfig,
-    BilibiliRequestSession,
-    BilibiliSelectionPolicy,
-    build_bilibili_headers,
-    is_bilibili_url,
-    is_bilibili_page_url,
-    prepare_bilibili_request,
-)
-from ..core.bilibili_download import BilibiliDownloadOptions, download_bilibili_manifest
-from ..core.bilibili_stream import resolve_bilibili_playback
+from ..config.manager import load_config, load_profiles
 from ..core.direct_downloader import download_direct_media
 from ..core.downloader import Downloader
 from ..core.ffmpeg_downloader import download_with_ffmpeg
 from ..core.filter import filter_playlist
-from ..core.media_type import MediaInfo, MediaKind, detect_media_type
+from ..core.media_type import MediaKind, detect_media_type
 from ..core.merger import merge_to_mp4
 from ..core.proxy_server import ProxyServer
 from ..core.utils import expand_path, require_ffmpeg
 from ..main import _load_media_playlist
-from .player import VlcPlayerWidget, VlcUnavailableError
-from .bilibili_login import BilibiliLoginWorker
 from .settings_dialog import SettingsDialog
 from .theme import apply_gui_theme
-
-
-class CheckMarkCheckBox(QCheckBox):
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        if not self.isChecked():
-            return
-        option = QStyleOptionButton()
-        self.initStyleOption(option)
-        indicator_rect = self.style().subElementRect(QStyle.SubElement.SE_CheckBoxIndicator, option, self)
-        if indicator_rect.isEmpty():
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(self.palette().color(QPalette.ColorRole.Highlight))
-        pen.setWidthF(max(1.5, indicator_rect.width() / 7))
-        pen.setCapStyle(Qt.PenCapStyle.Round)
-        pen.setJoinStyle(Qt.JoinStyle.Round)
-        painter.setPen(pen)
-        left = indicator_rect.left() + indicator_rect.width() * 0.24
-        middle = indicator_rect.left() + indicator_rect.width() * 0.45
-        right = indicator_rect.left() + indicator_rect.width() * 0.78
-        top = indicator_rect.top()
-        bottom = indicator_rect.bottom()
-        painter.drawLine(QPointF(left, top + indicator_rect.height() * 0.52), QPointF(middle, bottom - indicator_rect.height() * 0.25))
-        painter.drawLine(QPointF(middle, bottom - indicator_rect.height() * 0.25), QPointF(right, top + indicator_rect.height() * 0.25))
 
 
 @dataclass
 class DownloadTask:
     url: str
     output_name: str
-    media_info: MediaInfo | None = None
-    page: int | None = None
 
 
 class DownloadWorker(QThread):
@@ -118,70 +72,39 @@ class DownloadWorker(QThread):
     def run(self) -> None:
         work_root = self.output_dir / ".m3u8-downloader-segments"
         try:
+            headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
             keywords = self.config.get("filter_keywords", [])
             threads = int(self.config.get("threads", 16))
-            manual_bilibili_compat = bool(self.config.get("bilibili_compat", False))
 
             for task_index, task in enumerate(self.tasks, start=1):
                 if self._cancelled:
                     raise RuntimeError("download cancelled")
                 output = self.output_dir / task.output_name
                 work_dir = work_root / str(task_index)
-                headers = build_bilibili_headers(self.config, url=task.url)
-                bilibili_compat = manual_bilibili_compat or is_bilibili_url(task.url)
-                request_url, request_headers = prepare_bilibili_request(task.url, headers, bilibili_compat)
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Detecting media type")
-                media_info = task.media_info or detect_media_type(task.url, headers, bilibili_compat=bilibili_compat)
+                media_info = detect_media_type(task.url, headers)
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Detected {media_info.display_name}")
-                if is_bilibili_page_url(task.url):
-                    session = BilibiliRequestSession(BilibiliRequestConfig(headers=headers, cookie=headers.get("Cookie", "")))
-                    manifest = BilibiliProvider(session).resolve(task.url, page=task.page)
-                    options = BilibiliDownloadOptions(
-                        selection=BilibiliSelectionPolicy(
-                            video_codecs=tuple(self.config.get("bilibili_video_codecs", ["avc", "hevc", "av1"])),
-                            maximum_quality_id=self.config.get("bilibili_quality"),
-                            audio_language=str(self.config.get("bilibili_audio_language", "")),
-                            prefer_hdr=bool(self.config.get("bilibili_hdr", False)),
-                        ),
-                        threads=threads,
-                        save_subtitles=bool(self.config.get("bilibili_save_subtitles", True)),
-                        save_cover=bool(self.config.get("bilibili_save_cover", True)),
-                        save_danmaku=bool(self.config.get("bilibili_save_danmaku", False)),
-                        save_chapters=bool(self.config.get("bilibili_save_chapters", True)),
-                        save_info=bool(self.config.get("bilibili_save_info", True)),
-                    )
-                    self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading B 站视频/音频轨道")
-                    download_bilibili_manifest(
-                        manifest,
-                        output,
-                        session,
-                        options,
-                        progress_callback=lambda done, total, message: self._report_bilibili_progress(done, total, message),
-                        cancel_callback=lambda: self._cancelled,
-                    )
-                    self.log.emit(f"Saved {output}")
-                    continue
                 if media_info.kind == MediaKind.PROGRESSIVE:
                     self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading direct media")
-                    download_direct_media(task.url, output, headers, cancel_callback=lambda: self._cancelled, bilibili_compat=bilibili_compat)
+                    download_direct_media(task.url, output, headers, cancel_callback=lambda: self._cancelled)
                     self.log.emit(f"Saved {output}")
                     continue
 
                 require_ffmpeg()
                 if media_info.kind != MediaKind.HLS:
                     self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading with FFmpeg")
-                    download_with_ffmpeg(request_url, output, request_headers, bilibili_compat=bilibili_compat)
+                    download_with_ffmpeg(task.url, output, headers)
                     self.log.emit(f"Saved {output}")
                     continue
 
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Loading playlist")
-                playlist = _load_media_playlist(request_url, request_headers, bilibili_compat=bilibili_compat)
+                playlist = _load_media_playlist(task.url, headers)
                 filtered = filter_playlist(playlist, keywords)
                 if not filtered.segments:
                     raise RuntimeError("no playable segments after filtering")
 
                 self.log.emit(f"[{task_index}/{len(self.tasks)}] Downloading {len(filtered.segments)} segments")
-                downloader = Downloader(threads=threads, headers=request_headers, bilibili_compat=bilibili_compat)
+                downloader = Downloader(threads=threads, headers=headers)
                 ts_files = downloader.download(filtered.segments, work_dir, self.progress.emit, lambda: self._cancelled)
                 if self._cancelled:
                     raise RuntimeError("download cancelled")
@@ -197,20 +120,15 @@ class DownloadWorker(QThread):
             if work_root.exists() and not self._cancelled:
                 shutil.rmtree(work_root)
 
-    def _report_bilibili_progress(self, done: int, total: int, message: str) -> None:
-        self.progress.emit(done, total)
-        self.log.emit(message)
-
 
 class ProxyWorker(QThread):
-    started_url = pyqtSignal(str, str, object)
+    started_url = pyqtSignal(str, str)
     failed = pyqtSignal(str)
 
-    def __init__(self, url: str, config: dict, media_info: MediaInfo | None = None, parent=None):
+    def __init__(self, url: str, config: dict, parent=None):
         super().__init__(parent)
         self.url = url
         self.config = config
-        self.media_info = media_info
         self.server: ProxyServer | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.stop_event: asyncio.Event | None = None
@@ -229,51 +147,20 @@ class ProxyWorker(QThread):
 
     async def _run(self) -> None:
         try:
-            headers = build_bilibili_headers(self.config, url=self.url)
-            bilibili_compat = bool(self.config.get("bilibili_compat", False)) or is_bilibili_url(self.url)
-            request_url, request_headers = prepare_bilibili_request(self.url, headers, bilibili_compat)
-            media_info = self.media_info or detect_media_type(self.url, headers, bilibili_compat=bilibili_compat)
-            if is_bilibili_page_url(self.url):
-                playback = await asyncio.to_thread(resolve_bilibili_playback, self.url, headers)
-                self.stop_event = asyncio.Event()
-                self.server = ProxyServer(
-                    port=int(self.config.get("proxy_port", 8888)),
-                    headers=request_headers,
-                    bilibili_compat=True,
-                )
-                await self.server.start()
-                playback_url = self.server.get_bilibili_dash_url(
-                    playback.video,
-                    playback.audio,
-                    playback.manifest.metadata.get("duration_ms", 0),
-                )
-                self.started_url.emit(playback_url, media_info.display_name, {})
-                await self.stop_event.wait()
-                return
+            headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
+            media_info = detect_media_type(self.url, headers)
             if media_info.kind != MediaKind.HLS:
-                self.stop_event = asyncio.Event()
-                if is_bilibili_url(self.url) or any(key.lower() == "cookie" for key in request_headers):
-                    self.server = ProxyServer(
-                        port=int(self.config.get("proxy_port", 8888)),
-                        headers=request_headers,
-                        bilibili_compat=bilibili_compat,
-                    )
-                    await self.server.start()
-                    self.started_url.emit(self.server.get_media_url(request_url), media_info.display_name, request_headers)
-                    await self.stop_event.wait()
-                else:
-                    self.started_url.emit(request_url, media_info.display_name, request_headers)
+                self.started_url.emit(self.url, media_info.display_name)
                 return
 
-            self.stop_event = asyncio.Event()
             self.server = ProxyServer(
                 port=int(self.config.get("proxy_port", 8888)),
-                headers=request_headers,
+                headers=headers,
                 filter_keywords=self.config.get("filter_keywords", []),
-                bilibili_compat=bilibili_compat,
             )
             await self.server.start()
-            self.started_url.emit(self.server.get_stream_url(request_url), media_info.display_name, request_headers)
+            self.started_url.emit(self.server.get_stream_url(self.url), media_info.display_name)
+            self.stop_event = asyncio.Event()
             await self.stop_event.wait()
         except Exception as exc:  # noqa: BLE001 - show concise GUI error.
             self.failed.emit(str(exc))
@@ -286,40 +173,18 @@ class PlaylistPreviewWorker(QThread):
     loaded = pyqtSignal(str, str)
     failed = pyqtSignal(str)
 
-    def __init__(self, url: str, headers: dict[str, str], bilibili_compat: bool = False, parent=None):
+    def __init__(self, url: str, headers: dict[str, str], parent=None):
         super().__init__(parent)
         self.url = url
         self.headers = headers
-        self.bilibili_compat = bilibili_compat
 
     def run(self) -> None:
         try:
-            request_url, request_headers = prepare_bilibili_request(self.url, self.headers, self.bilibili_compat)
-            response = requests.get(request_url, headers=request_headers, timeout=30)
+            response = requests.get(self.url, headers=self.headers, timeout=30)
             response.raise_for_status()
             self.loaded.emit(self.url, response.text)
         except Exception as exc:  # noqa: BLE001 - show concise GUI error.
             self.failed.emit(str(exc))
-
-
-class MediaDetectionWorker(QThread):
-    detected = pyqtSignal(str, object)
-    failed = pyqtSignal(str, str)
-
-    def __init__(self, url: str, headers: dict[str, str], bilibili_compat: bool = False, parent=None):
-        super().__init__(parent)
-        self.url = url
-        self.headers = headers
-        self.bilibili_compat = bilibili_compat
-
-    def run(self) -> None:
-        try:
-            if is_bilibili_page_url(self.url):
-                self.detected.emit(self.url, MediaInfo(MediaKind.DASH, "bilibili page", "application/dash+xml"))
-            else:
-                self.detected.emit(self.url, detect_media_type(self.url, self.headers, bilibili_compat=self.bilibili_compat))
-        except Exception as exc:  # noqa: BLE001 - show concise detection error.
-            self.failed.emit(self.url, str(exc))
 
 
 class PlaylistPreviewDialog(QDialog):
@@ -346,84 +211,6 @@ class PlaylistPreviewDialog(QDialog):
         layout.addWidget(buttons)
 
 
-class BilibiliPageSelectionDialog(QDialog):
-    def __init__(self, title: str, pages, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("选择 B 站分 P")
-        self.resize(520, 360)
-        self.pages = pages
-        self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
-        for page in pages:
-            self.list_widget.addItem(f"P{page.page}  {page.title or '未命名'}")
-        if pages:
-            self.list_widget.item(0).setSelected(True)
-        self.all_pages = QCheckBox("下载全部分 P")
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(title or "B 站视频"))
-        layout.addWidget(self.list_widget)
-        layout.addWidget(self.all_pages)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def selected_pages(self) -> list[int]:
-        if self.all_pages.isChecked():
-            return [page.page for page in self.pages]
-        selected_rows = sorted(index.row() for index in self.list_widget.selectedIndexes())
-        return [self.pages[row].page for row in selected_rows if 0 <= row < len(self.pages)]
-
-
-class BilibiliOptionsDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("B 站下载选项")
-        self.quality = QComboBox()
-        self.quality.addItem("自动", None)
-        for value, label in ((127, "8K"), (120, "4K"), (116, "1080P60"), (112, "1080P+"), (80, "1080P"), (64, "720P"), (32, "480P"), (16, "360P")):
-            self.quality.addItem(f"{label} ({value})", value)
-        self.codec = QComboBox()
-        self.codec.addItems(["AVC 优先", "HEVC 优先", "AV1 优先"])
-        self.subtitles = QCheckBox("下载并封装字幕")
-        self.subtitles.setChecked(True)
-        self.cover = QCheckBox("保存封面")
-        self.cover.setChecked(True)
-        self.danmaku = QCheckBox("保存弹幕 XML")
-        self.chapters = QCheckBox("写入章节")
-        self.chapters.setChecked(True)
-        self.info = QCheckBox("保存信息 JSON")
-        self.info.setChecked(True)
-        layout = QFormLayout(self)
-        layout.addRow("最高画质", self.quality)
-        layout.addRow("视频编码", self.codec)
-        layout.addRow(self.subtitles)
-        layout.addRow(self.cover)
-        layout.addRow(self.danmaku)
-        layout.addRow(self.chapters)
-        layout.addRow(self.info)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addRow(buttons)
-
-    def values(self) -> dict:
-        codec_order = {
-            "AVC 优先": ["avc", "hevc", "av1"],
-            "HEVC 优先": ["hevc", "avc", "av1"],
-            "AV1 优先": ["av1", "avc", "hevc"],
-        }
-        return {
-            "bilibili_quality": self.quality.currentData(),
-            "bilibili_video_codecs": codec_order[self.codec.currentText()],
-            "bilibili_save_subtitles": self.subtitles.isChecked(),
-            "bilibili_save_cover": self.cover.isChecked(),
-            "bilibili_save_danmaku": self.danmaku.isChecked(),
-            "bilibili_save_chapters": self.chapters.isChecked(),
-            "bilibili_save_info": self.info.isChecked(),
-        }
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -436,15 +223,6 @@ class MainWindow(QMainWindow):
         self.proxy_worker: ProxyWorker | None = None
         self.preview_worker: PlaylistPreviewWorker | None = None
         self.download_rows: list[tuple[QLineEdit, QLineEdit, QWidget]] = []
-        self.media_info_cache: dict[str, MediaInfo] = {}
-        self.detection_workers: set[MediaDetectionWorker] = set()
-        self.stream_media_info: MediaInfo | None = None
-        self.stream_detected_url = ""
-        self.stream_active = False
-        self.player_fullscreen = False
-        self.download_row_status: dict[QLineEdit, QLabel] = {}
-        self.download_row_preview: dict[QLineEdit, QPushButton] = {}
-        self.download_row_timers: dict[QLineEdit, QTimer] = {}
 
         self.stack = QStackedWidget()
         self.home_page = self._build_home_page()
@@ -458,23 +236,9 @@ class MainWindow(QMainWindow):
     def _start_download(self) -> None:
         if not self._choose_download_mode():
             return
-        pending = [
-            url_edit.text().strip()
-            for url_edit, _, _ in self.download_rows
-            if url_edit.text().strip() and (self.media_info_cache.get(url_edit.text().strip()) is None or self.media_info_cache[url_edit.text().strip()].kind == MediaKind.UNKNOWN)
-        ]
-        if pending:
-            if any(self.media_info_cache.get(url).kind == MediaKind.UNKNOWN for url in pending if self.media_info_cache.get(url)):
-                QMessageBox.warning(self, "Unknown media", "Some URLs could not be detected. Check the links or request headers.")
-            else:
-                QMessageBox.information(self, "Media detection pending", "Wait for the 5-second media detection to finish for every URL before downloading.")
-            return
         tasks = self._download_tasks()
         if not tasks:
             QMessageBox.warning(self, "Missing URL", "Add at least one media URL.")
-            return
-        tasks = self._choose_bilibili_pages(tasks)
-        if tasks is None:
             return
         output_dir = expand_path(self.output.text().strip())
         config = self._runtime_config(
@@ -482,13 +246,7 @@ class MainWindow(QMainWindow):
             self.download_ad_filter.isChecked(),
             self.download_keywords.toPlainText(),
             self.download_threads.value(),
-            self.download_bilibili_compat.isChecked(),
         )
-        if any(is_bilibili_page_url(task.url) for task in tasks):
-            options_dialog = BilibiliOptionsDialog(self)
-            if not options_dialog.exec():
-                return
-            config.update(options_dialog.values())
 
         self._set_running(True)
         self.progress.setValue(0)
@@ -502,37 +260,6 @@ class MainWindow(QMainWindow):
         self.worker.completed.connect(self._download_completed)
         self.worker.start()
 
-    def _choose_bilibili_pages(self, tasks: list[DownloadTask]) -> list[DownloadTask] | None:
-        expanded: list[DownloadTask] = []
-        for task in tasks:
-            if not is_bilibili_page_url(task.url):
-                expanded.append(task)
-                continue
-            headers = build_bilibili_headers(self.config, url=task.url)
-            if self.download_referer.text().strip():
-                headers["Referer"] = self.download_referer.text().strip()
-            try:
-                session = BilibiliRequestSession(BilibiliRequestConfig(headers=headers, cookie=headers.get("Cookie", "")))
-                collection = BilibiliProvider(session).describe(task.url)
-            except Exception as exc:  # noqa: BLE001 - selection dialog shows actionable failure.
-                QMessageBox.critical(self, "B 站页面解析失败", str(exc))
-                return None
-            if len(collection.pages) == 1:
-                expanded.append(task.__class__(task.url, task.output_name, task.media_info, collection.pages[0].page))
-                continue
-            dialog = BilibiliPageSelectionDialog(collection.title, collection.pages, self)
-            if not dialog.exec():
-                return None
-            selected_pages = dialog.selected_pages()
-            for page in selected_pages:
-                output_name = task.output_name
-                if len(selected_pages) > 1:
-                    stem = Path(output_name).stem
-                    suffix = Path(output_name).suffix or ".mp4"
-                    output_name = f"{stem}-P{page:02d}{suffix}"
-                expanded.append(task.__class__(task.url, output_name, task.media_info, page))
-        return expanded
-
     def _stop_download(self) -> None:
         if self.worker:
             self.worker.cancel()
@@ -544,187 +271,41 @@ class MainWindow(QMainWindow):
         if not url:
             QMessageBox.warning(self, "Missing URL", "Enter a media URL.")
             return
-        if url != self.stream_detected_url or self.stream_media_info is None:
-            QMessageBox.information(self, "Media detection pending", "Wait for media detection to finish before starting playback.")
-            return
-        if self.stream_media_info.kind == MediaKind.UNKNOWN:
-            QMessageBox.warning(self, "Unknown media", "The media type could not be detected. Check the URL or request headers.")
-            return
         config = self._runtime_config(
             self.stream_referer.text().strip(),
             self.stream_ad_filter.isChecked(),
             self.stream_keywords.toPlainText(),
-            bilibili_compat=self.stream_bilibili_compat.isChecked(),
         )
         self.proxy_button.setEnabled(False)
         self.stop_proxy_button.setEnabled(True)
-        self.proxy_worker = ProxyWorker(url, config, self.stream_media_info, self)
+        self.proxy_worker = ProxyWorker(url, config, self)
         self.proxy_worker.started_url.connect(self._proxy_started)
         self.proxy_worker.failed.connect(self._proxy_failed)
         self.proxy_worker.finished.connect(self._proxy_finished)
         self.proxy_worker.start()
 
-    def _preview_playlist(
-        self,
-        url: str,
-        referer: str,
-        media_info: MediaInfo | None = None,
-        detected_url: str = "",
-        bilibili_compat: bool = False,
-    ) -> None:
+    def _preview_playlist(self, url: str, referer: str) -> None:
         url = url.strip()
         if not url:
             QMessageBox.warning(self, "Missing URL", "Enter an m3u8 URL before previewing.")
             return
-        if url != detected_url or media_info is None:
-            QMessageBox.information(self, "Media detection pending", "Wait for media detection to finish before previewing.")
-            return
-        if media_info.kind != MediaKind.HLS:
-            QMessageBox.warning(self, "Not an m3u8 playlist", f"Detected {media_info.display_name}; m3u8 preview is only available for HLS playlists.")
+        if not _looks_like_m3u_url(url):
+            QMessageBox.warning(self, "Not an m3u8 URL", "Preview only loads URLs ending with .m3u8 or .m3u to avoid fetching large media files.")
             return
         if self.preview_worker and self.preview_worker.isRunning():
             QMessageBox.information(self, "Preview running", "m3u8 preview is already loading.")
             return
-        headers = build_bilibili_headers(self.config, url=url)
+        headers = {key: value for key, value in self.config.get("headers", {}).items() if value}
         if referer.strip():
             headers["Referer"] = referer.strip()
         self._append_stream_log("Loading m3u8 preview")
-        self.preview_worker = PlaylistPreviewWorker(url, headers, bilibili_compat, self)
+        self.preview_worker = PlaylistPreviewWorker(url, headers, self)
         self.preview_worker.loaded.connect(self._playlist_preview_loaded)
         self.preview_worker.failed.connect(self._playlist_preview_failed)
         self.preview_worker.finished.connect(lambda: setattr(self, "preview_worker", None))
         self.preview_worker.start()
 
-    def _start_media_detection(
-        self,
-        url: str,
-        headers: dict[str, str],
-        on_detected,
-        on_failed,
-        use_cache: bool = True,
-        bilibili_compat: bool = False,
-    ) -> None:
-        if use_cache:
-            cached = self.media_info_cache.get(url)
-            if cached is not None:
-                on_detected(url, cached)
-                return
-        worker = MediaDetectionWorker(url, headers, bilibili_compat, self)
-        self.detection_workers.add(worker)
-        worker.detected.connect(on_detected)
-        worker.failed.connect(on_failed)
-        worker.finished.connect(lambda: self.detection_workers.discard(worker))
-        worker.start()
-
-    def _schedule_stream_detection(self) -> None:
-        if not hasattr(self, "stream_url"):
-            return
-        if self.stream_active:
-            self._stop_proxy()
-        self.stream_detect_timer.stop()
-        url = self.stream_url.text().strip()
-        self.stream_media_info = None
-        self.stream_detected_url = ""
-        self.preview_button.setEnabled(False)
-        self.proxy_button.setEnabled(False)
-        self.detect_stream_button.setEnabled(bool(url))
-        if not url:
-            self.stream_status.setText("输入链接后自动探测，或点击立即探测")
-            return
-        self.stream_status.setText("将在 5 秒后探测媒体类型")
-        self.stream_detect_timer.start(5000)
-
-    def _detect_stream_now(self) -> None:
-        self.stream_detect_timer.stop()
-        self._detect_stream_url()
-
-    def _detect_stream_url(self) -> None:
-        url = self.stream_url.text().strip()
-        if not url:
-            return
-        self.stream_status.setText("正在探测媒体类型")
-        headers = build_bilibili_headers(self.config, url=url)
-        if self.stream_referer.text().strip():
-            headers["Referer"] = self.stream_referer.text().strip()
-        self._start_media_detection(
-            url,
-            headers,
-            self._stream_detection_completed,
-            self._stream_detection_failed,
-            use_cache=False,
-            bilibili_compat=self.stream_bilibili_compat.isChecked(),
-        )
-
-    def _stream_detection_completed(self, url: str, media_info: MediaInfo) -> None:
-        if url != self.stream_url.text().strip():
-            return
-        self.stream_media_info = media_info
-        self.stream_detected_url = url
-        self.proxy_button.setEnabled(media_info.kind != MediaKind.UNKNOWN)
-        self.preview_button.setEnabled(media_info.kind == MediaKind.HLS)
-        self.stream_status.setText(f"已识别：{media_info.display_name}")
-
-    def _stream_detection_failed(self, url: str, message: str) -> None:
-        if url == self.stream_url.text().strip():
-            self.stream_status.setText(f"探测失败：{message}")
-
-    def _invalidate_media_detection(self) -> None:
-        self.media_info_cache.clear()
-        if hasattr(self, "stream_url"):
-            self._schedule_stream_detection()
-        for url_edit in self.download_row_timers:
-            self._schedule_download_detection(url_edit)
-
-    def _schedule_download_detection(self, url_edit: QLineEdit) -> None:
-        url = url_edit.text().strip()
-        status = self.download_row_status[url_edit]
-        preview = self.download_row_preview[url_edit]
-        preview.setEnabled(False)
-        if not url:
-            status.setText("等待输入链接")
-            return
-        cached = self.media_info_cache.get(url)
-        if cached is not None:
-            self._download_detection_completed(url_edit, url, cached)
-            return
-        status.setText("将在 5 秒后探测媒体类型")
-        self.download_row_timers[url_edit].start(5000)
-
-    def _detect_download_url(self, url_edit: QLineEdit) -> None:
-        url = url_edit.text().strip()
-        if not url:
-            return
-        self.download_row_status[url_edit].setText("正在探测媒体类型")
-        headers = build_bilibili_headers(self.config, url=url)
-        if self.download_referer.text().strip():
-            headers["Referer"] = self.download_referer.text().strip()
-        self._start_media_detection(
-            url,
-            headers,
-            lambda detected_url, info: self._download_detection_completed(url_edit, detected_url, info),
-            lambda detected_url, message: self._download_detection_failed(url_edit, detected_url, message),
-            bilibili_compat=self.download_bilibili_compat.isChecked(),
-        )
-
-    def _download_detection_completed(self, url_edit: QLineEdit, url: str, media_info: MediaInfo) -> None:
-        self.media_info_cache[url] = media_info
-        status = self.download_row_status.get(url_edit)
-        preview = self.download_row_preview.get(url_edit)
-        if url != url_edit.text().strip() or status is None or preview is None:
-            return
-        status.setText(f"已识别：{media_info.display_name}")
-        preview.setEnabled(media_info.kind == MediaKind.HLS)
-
-    def _download_detection_failed(self, url_edit: QLineEdit, url: str, message: str) -> None:
-        status = self.download_row_status.get(url_edit)
-        if url == url_edit.text().strip() and status is not None:
-            status.setText(f"探测失败：{message}")
-
     def _stop_proxy(self) -> None:
-        self.stream_active = False
-        if hasattr(self, "stream_player"):
-            self.stream_player.stop()
-            self.stream_player.hide()
         if self.proxy_worker:
             self.proxy_worker.stop()
             self.proxy_worker = None
@@ -732,70 +313,22 @@ class MainWindow(QMainWindow):
         self.stop_proxy_button.setEnabled(False)
         self._append_stream_log("Proxy stopped")
 
-    def _proxy_started(self, proxy_url: str, media_name: str, headers: object) -> None:
+    def _proxy_started(self, proxy_url: str, media_name: str) -> None:
         self._append_stream_log(f"Detected {media_name}")
         self._append_stream_log(f"Playback URL: {proxy_url}")
-        try:
-            self.stream_player.play(proxy_url, headers if isinstance(headers, dict) else {})
-        except VlcUnavailableError as exc:
-            self._proxy_failed(str(exc))
-            return
-        self.stream_player.show()
-        self.stream_active = True
-        self.stop_proxy_button.setEnabled(True)
-        self.stream_status.setText("正在播放")
+        self.stream_status.setText("Proxy running" if self.proxy_worker and self.proxy_worker.server else "Direct media URL")
 
     def _proxy_failed(self, message: str) -> None:
-        if self.proxy_worker:
-            self.proxy_worker.stop()
-        self.stream_active = False
-        if hasattr(self, "stream_player"):
-            self.stream_player.stop()
-            self.stream_player.hide()
         self._append_stream_log(f"Proxy failed: {message}")
         self.proxy_button.setEnabled(True)
         self.stop_proxy_button.setEnabled(False)
         QMessageBox.critical(self, "Proxy failed", message)
 
     def _proxy_finished(self) -> None:
-        if self.stream_active:
+        if self.proxy_worker and self.proxy_worker.server:
             return
         self.proxy_button.setEnabled(True)
         self.stop_proxy_button.setEnabled(False)
-
-    def _toggle_player_fullscreen(self) -> None:
-        self._set_player_fullscreen(not self.player_fullscreen)
-
-    def _set_player_fullscreen(self, enabled: bool) -> None:
-        if enabled == self.player_fullscreen:
-            return
-        self.player_fullscreen = enabled
-        if enabled:
-            for widget in self.stream_chrome_widgets:
-                widget.hide()
-            self.stream_page.layout().setContentsMargins(0, 0, 0, 0)
-            self.showFullScreen()
-            self.stream_player.fullscreen_button.setText("退出全屏")
-        else:
-            self.showNormal()
-            self.stream_page.layout().setContentsMargins(24, 24, 24, 24)
-            for widget in self.stream_chrome_widgets:
-                widget.show()
-            self.stream_player.fullscreen_button.setText("全屏")
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Escape and self.player_fullscreen:
-            self._set_player_fullscreen(False)
-            return
-        super().keyPressEvent(event)
-
-    def closeEvent(self, event) -> None:
-        if self.player_fullscreen:
-            self._set_player_fullscreen(False)
-        self._stop_proxy()
-        if hasattr(self, "stream_player"):
-            self.stream_player.close()
-        event.accept()
 
     def _playlist_preview_loaded(self, url: str, content: str) -> None:
         PlaylistPreviewDialog(url, content, self).exec()
@@ -821,58 +354,19 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self.config, self.profiles, self)
-        dialog.theme_preview_requested.connect(lambda theme: self._preview_settings_theme(dialog, theme))
-        dialog.bilibili_login_requested.connect(lambda: self._start_bilibili_login(dialog))
         if dialog.exec():
             self.config = load_config()
             self.profiles = load_profiles(self.config)
             self.active_profile = self.profiles[0]
-            self._apply_theme(self.config.get("theme", "system"), self.config.get("button_color", ""))
+            app = QApplication.instance()
+            if app is not None:
+                apply_gui_theme(app, self.config.get("theme", "system"), self.config.get("button_color", ""))
             referer = self.config.get("headers", {}).get("Referer", "")
             self.stream_referer.setText(referer)
             self.download_referer.setText(referer)
-            bilibili_compat = bool(self.config.get("bilibili_compat", False))
-            self.stream_bilibili_compat.setChecked(bilibili_compat)
-            self.download_bilibili_compat.setChecked(bilibili_compat)
             self.download_threads.setValue(int(self.config.get("threads", 16)))
             self._apply_profile(self.active_profile)
-            self._invalidate_media_detection()
             self._append_log("Settings saved")
-        else:
-            self._apply_theme(self.config.get("theme", "system"), self.config.get("button_color", ""))
-
-    def _start_bilibili_login(self, dialog: SettingsDialog) -> None:
-        worker = getattr(self, "_bilibili_login_worker", None)
-        if worker is not None and worker.isRunning():
-            return
-        worker = BilibiliLoginWorker(self)
-        self._bilibili_login_worker = worker
-        dialog.set_bilibili_login_status("正在生成二维码…", enabled=False)
-        dialog.set_bilibili_qr("")
-        worker.status.connect(lambda message: dialog.set_bilibili_login_status(message))
-        worker.qr_code_ready.connect(dialog.set_bilibili_qr)
-        worker.completed.connect(lambda cookie: self._bilibili_login_completed(dialog, cookie))
-        worker.failed.connect(lambda message: self._bilibili_login_failed(dialog, message))
-        dialog.finished.connect(worker.cancel)
-        worker.finished.connect(worker.deleteLater)
-        worker.start()
-
-    def _bilibili_login_completed(self, dialog: SettingsDialog, cookie: str) -> None:
-        dialog.bilibili_cookie.setText(cookie)
-        self.config["bilibili_cookie"] = cookie
-        save_config(self.config)
-        dialog.set_bilibili_login_status("登录成功，Cookie 已自动保存", enabled=True)
-
-    def _bilibili_login_failed(self, dialog: SettingsDialog, message: str) -> None:
-        dialog.set_bilibili_login_status(f"登录失败：{message}", enabled=True)
-
-    def _preview_settings_theme(self, dialog: SettingsDialog, theme: str) -> None:
-        self._apply_theme(theme, dialog.button_color.text())
-
-    def _apply_theme(self, theme: str, button_color: str) -> None:
-        app = QApplication.instance()
-        if app is not None:
-            apply_gui_theme(app, theme, button_color)
 
     def _choose_download_mode(self) -> bool:
         dialog = DownloadModeDialog(self.profiles, self)
@@ -909,36 +403,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(output_edit)
         self.download_rows_layout.addWidget(row_widget)
         self.download_rows.append((url_edit, output_edit, row_widget))
-        preview.clicked.connect(
-            lambda: self._preview_playlist(
-                url_edit.text(),
-                self.download_referer.text(),
-                self.media_info_cache.get(url_edit.text().strip()),
-                url_edit.text().strip(),
-                self.download_bilibili_compat.isChecked(),
-            )
-        )
+        preview.clicked.connect(lambda: self._preview_playlist(url_edit.text(), self.download_referer.text()))
         remove.clicked.connect(lambda: self._remove_download_row(row_widget))
-        status = QLabel("等待输入链接")
-        layout.addWidget(status)
-        timer = QTimer(url_edit)
-        timer.setSingleShot(True)
-        timer.timeout.connect(lambda: self._detect_download_url(url_edit))
-        self.download_row_status[url_edit] = status
-        self.download_row_preview[url_edit] = preview
-        self.download_row_timers[url_edit] = timer
-        url_edit.textChanged.connect(lambda _text: self._schedule_download_detection(url_edit))
-        self._schedule_download_detection(url_edit)
 
     def _remove_download_row(self, row_widget: QWidget) -> None:
-        removed = [row for row in self.download_rows if row[2] is row_widget]
         self.download_rows = [row for row in self.download_rows if row[2] is not row_widget]
-        for url_edit, _, _ in removed:
-            self.download_row_status.pop(url_edit, None)
-            self.download_row_preview.pop(url_edit, None)
-            timer = self.download_row_timers.pop(url_edit, None)
-            if timer:
-                timer.stop()
         row_widget.setParent(None)
         row_widget.deleteLater()
 
@@ -951,10 +420,7 @@ class MainWindow(QMainWindow):
             output_name = output_edit.text().strip()
             if not output_name or output_name in {"video.mp4", f"video-{index:03d}.mp4"}:
                 output_name = _output_name_for_url(url, index, output_name)
-            media_info = self.media_info_cache.get(url)
-            if media_info is None or media_info.kind == MediaKind.UNKNOWN:
-                continue
-            tasks.append(DownloadTask(url, output_name, media_info))
+            tasks.append(DownloadTask(url, output_name))
         return tasks
 
     def _apply_profile(self, profile: dict) -> None:
@@ -969,11 +435,7 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(running)
         self.settings_button.setEnabled(not running)
         if hasattr(self, "preview_button"):
-            self.preview_button.setEnabled(not running and self.stream_media_info is not None and self.stream_media_info.kind == MediaKind.HLS)
-        for url_edit, preview in self.download_row_preview.items():
-            url = url_edit.text().strip()
-            media_info = self.media_info_cache.get(url)
-            preview.setEnabled(not running and media_info is not None and media_info.kind == MediaKind.HLS)
+            self.preview_button.setEnabled(not running)
 
     def _append_log(self, message: str) -> None:
         self.log.append(message)
@@ -1014,73 +476,29 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
-        header_widget = QWidget()
-        header_widget.setLayout(self._header_row("流播"))
-        layout.addWidget(header_widget)
-        self.stream_chrome_widgets = [header_widget]
+        layout.addLayout(self._header_row("流播"))
 
         self.stream_url = QLineEdit()
         self.stream_url.setPlaceholderText("https://example.com/video/index.m3u8 or video.mp4")
-        self.detect_stream_button = QPushButton("立即探测")
-        self.detect_stream_button.setObjectName("secondary")
-        self.detect_stream_button.clicked.connect(self._detect_stream_now)
-        self.stream_url.returnPressed.connect(self._detect_stream_now)
-        stream_url_row = QHBoxLayout()
-        stream_url_row.addWidget(self.stream_url)
-        stream_url_row.addWidget(self.detect_stream_button)
         self.stream_referer = QLineEdit(self.config.get("headers", {}).get("Referer", ""))
-        self.stream_detect_timer = QTimer(self)
-        self.stream_detect_timer.setSingleShot(True)
-        self.stream_detect_timer.timeout.connect(self._detect_stream_url)
-        self.stream_ad_filter = CheckMarkCheckBox("启用去广告过滤")
+        self.stream_ad_filter = QCheckBox("启用去广告过滤")
         self.stream_ad_filter.toggled.connect(self._sync_filter_visibility)
-        self.stream_bilibili_compat = CheckMarkCheckBox("开启B站兼容模式")
-        self.stream_bilibili_compat.setChecked(bool(self.config.get("bilibili_compat", False)))
-        self.stream_bilibili_compat.toggled.connect(lambda _checked: self._schedule_stream_detection())
         self.stream_keywords = QTextEdit("\n".join(self.config.get("filter_keywords", [])))
         self.stream_keywords.setFixedHeight(96)
         self.stream_keywords_label = QLabel("过滤关键词，每行一个")
 
         form = QFormLayout()
-        form.addRow("媒体地址", stream_url_row)
-        advanced_toggle = QPushButton("高级")
-        advanced_toggle.setCheckable(True)
-        advanced_toggle.setChecked(False)
-        advanced_panel = QWidget()
-        advanced_form = QFormLayout(advanced_panel)
-        advanced_form.addRow("Referer，可留空", self.stream_referer)
-        advanced_form.addRow("", self.stream_bilibili_compat)
-        advanced_form.addRow("", self.stream_ad_filter)
-        advanced_form.addRow(self.stream_keywords_label, self.stream_keywords)
-        advanced_panel.setVisible(False)
-        advanced_toggle.toggled.connect(advanced_panel.setVisible)
-        input_panel = QWidget()
-        input_layout = QVBoxLayout(input_panel)
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.addLayout(form)
-        input_layout.addWidget(advanced_toggle)
-        input_layout.addWidget(advanced_panel)
-        layout.addWidget(input_panel)
-        self.stream_chrome_widgets.append(input_panel)
-
-        self.stream_player = VlcPlayerWidget()
-        self.stream_player.setVisible(False)
-        self.stream_player.fullscreen_requested.connect(self._toggle_player_fullscreen)
-        layout.addWidget(self.stream_player, 1)
+        form.addRow("媒体地址", self.stream_url)
+        form.addRow("Referer，可留空", self.stream_referer)
+        form.addRow("", self.stream_ad_filter)
+        form.addRow(self.stream_keywords_label, self.stream_keywords)
+        layout.addLayout(form)
 
         self.proxy_button = QPushButton("开始流播")
         self.proxy_button.clicked.connect(self._start_proxy)
         self.preview_button = QPushButton("预览 m3u8 列表")
         self.preview_button.setObjectName("secondary")
-        self.preview_button.clicked.connect(
-            lambda: self._preview_playlist(
-                self.stream_url.text(),
-                self.stream_referer.text(),
-                self.stream_media_info,
-                self.stream_detected_url,
-                self.stream_bilibili_compat.isChecked(),
-            )
-        )
+        self.preview_button.clicked.connect(lambda: self._preview_playlist(self.stream_url.text(), self.stream_referer.text()))
         self.stop_proxy_button = QPushButton("停止流播")
         self.stop_proxy_button.setObjectName("secondary")
         self.stop_proxy_button.setEnabled(False)
@@ -1090,20 +508,13 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.preview_button)
         controls.addWidget(self.stop_proxy_button)
         controls.addStretch(1)
-        controls_widget = QWidget()
-        controls_widget.setLayout(controls)
-        layout.addWidget(controls_widget)
-        self.stream_chrome_widgets.append(controls_widget)
+        layout.addLayout(controls)
 
         self.stream_status = QLabel("等待操作")
         self.stream_log = QTextEdit()
         self.stream_log.setReadOnly(True)
         layout.addWidget(self.stream_status)
         layout.addWidget(self.stream_log, 1)
-        self.stream_chrome_widgets.extend([self.stream_status, self.stream_log])
-        self.stream_url.textChanged.connect(lambda _text: self._schedule_stream_detection())
-        self.stream_referer.textChanged.connect(lambda _text: self._schedule_stream_detection())
-        self._schedule_stream_detection()
         return page
 
     def _build_download_page(self) -> QWidget:
@@ -1114,7 +525,6 @@ class MainWindow(QMainWindow):
         layout.addLayout(self._header_row("下载"))
 
         self.download_referer = QLineEdit(self.config.get("headers", {}).get("Referer", ""))
-        self.download_referer.textChanged.connect(lambda _text: self._invalidate_media_detection())
         self.output = QLineEdit(str(expand_path(self.active_profile.get("save_dir", self.config.get("save_dir", "~/Downloads")))))
         output_browse = QPushButton("选择")
         output_browse.setObjectName("secondary")
@@ -1125,12 +535,9 @@ class MainWindow(QMainWindow):
         self.download_threads = QSpinBox()
         self.download_threads.setRange(1, 128)
         self.download_threads.setValue(int(self.active_profile.get("threads", self.config.get("threads", 16))))
-        self.download_ad_filter = CheckMarkCheckBox("启用去广告过滤")
+        self.download_ad_filter = QCheckBox("启用去广告过滤")
         self.download_ad_filter.setChecked(bool(self.active_profile.get("ad_filter", False)))
         self.download_ad_filter.toggled.connect(self._sync_filter_visibility)
-        self.download_bilibili_compat = CheckMarkCheckBox("开启B站兼容模式")
-        self.download_bilibili_compat.setChecked(bool(self.config.get("bilibili_compat", False)))
-        self.download_bilibili_compat.toggled.connect(lambda _checked: self._invalidate_media_detection())
         self.download_keywords = QTextEdit("\n".join(self.active_profile.get("filter_keywords", self.config.get("filter_keywords", []))))
         self.download_keywords.setFixedHeight(96)
         self.download_keywords_label = QLabel("过滤关键词，每行一个")
@@ -1140,22 +547,12 @@ class MainWindow(QMainWindow):
         add_url.clicked.connect(lambda: self._add_download_row())
 
         form = QFormLayout()
+        form.addRow("Referer，可留空", self.download_referer)
         form.addRow("保存目录", output_row)
         form.addRow("并发线程数", self.download_threads)
+        form.addRow("", self.download_ad_filter)
+        form.addRow(self.download_keywords_label, self.download_keywords)
         layout.addLayout(form)
-        advanced_toggle = QPushButton("高级")
-        advanced_toggle.setCheckable(True)
-        advanced_toggle.setChecked(False)
-        advanced_panel = QWidget()
-        advanced_form = QFormLayout(advanced_panel)
-        advanced_form.addRow("Referer，可留空", self.download_referer)
-        advanced_form.addRow("", self.download_bilibili_compat)
-        advanced_form.addRow("", self.download_ad_filter)
-        advanced_form.addRow(self.download_keywords_label, self.download_keywords)
-        advanced_panel.setVisible(False)
-        advanced_toggle.toggled.connect(advanced_panel.setVisible)
-        layout.addWidget(advanced_toggle)
-        layout.addWidget(advanced_panel)
         layout.addWidget(QLabel("下载任务"))
         layout.addLayout(self.download_rows_layout)
         layout.addWidget(add_url)
@@ -1210,14 +607,7 @@ class MainWindow(QMainWindow):
             self.download_keywords.setVisible(bool(download_visible))
             self.download_keywords_label.setVisible(bool(download_visible))
 
-    def _runtime_config(
-        self,
-        referer: str,
-        ad_filter: bool,
-        keywords_text: str,
-        threads: int | None = None,
-        bilibili_compat: bool = False,
-    ) -> dict:
+    def _runtime_config(self, referer: str, ad_filter: bool, keywords_text: str, threads: int | None = None) -> dict:
         config = self.config.copy()
         headers = config.get("headers", {}).copy()
         headers["Referer"] = referer
@@ -1225,7 +615,6 @@ class MainWindow(QMainWindow):
         config["filter_keywords"] = [line.strip() for line in keywords_text.splitlines() if line.strip()] if ad_filter else []
         if threads is not None:
             config["threads"] = threads
-        config["bilibili_compat"] = bilibili_compat
         return config
 
 class DownloadModeDialog(QDialog):

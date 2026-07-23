@@ -1,4 +1,4 @@
-.TH M3U8-DOWNLOADER 1 "July 2026" "m3u8-downloader 5.0.1" "User Commands"
+.TH M3U8-DOWNLOADER 1 "July 2026" "m3u8-downloader 4.2.1" "User Commands"
 .SH NAME
 m3u8-downloader \- download, filter, and merge m3u8 streams
 .SH SYNOPSIS
@@ -8,8 +8,8 @@ m3u8-downloader \- download, filter, and merge m3u8 streams
 .SH DESCRIPTION
 .B m3u8-downloader
 opens the terminal UI when run without a URL. When a URL is provided, it
-downloads supported media or a regular Bilibili video page. HLS playlists can
-be filtered by keyword or regular expression, and downloaded content is merged
+downloads an m3u8 playlist, optionally filters advertising segments by keyword
+or regular expression, downloads media segments concurrently, and merges them
 into an MP4 file with FFmpeg.
 .PP
 The command supports media playlists directly and master playlists with multiple
@@ -18,8 +18,8 @@ index is specified.
 .SH ARGUMENTS
 .TP
 .I url
-Optional media URL or regular Bilibili video page. If omitted, the terminal UI
-is opened.
+Optional m3u8 playlist URL to download directly. This can be a media playlist or
+a master playlist. If omitted, the terminal UI is opened.
 .SH OPTIONS
 .TP
 .B \-h, \--help
@@ -38,54 +38,6 @@ Directory used for downloaded TS segments. The directory is created if needed.
 Add an HTTP request header. Use the form
 .IR "Name: value" .
 This option can be repeated. A common use is passing a Referer header.
-.TP
-.BI \--cookie " COOKIE"
-Set the Bilibili Cookie for a Bilibili download. This value takes precedence
-over the saved Bilibili Cookie configuration.
-.TP
-.B \--bilibili-login
-Generate a QR code, wait for web login confirmation, and save the resulting
-login state to the configuration file.
-.TP
-.BI \--page " PAGE"
-Select one Bilibili page number, starting at 1.
-.TP
-.B \--all-pages
-Download all pages from a multi-page Bilibili video.
-.TP
-.BI \--quality " QUALITY"
-Set the maximum Bilibili quality ID, for example 80.
-.TP
-.BI \--video-codec " CODEC"
-Set Bilibili video codec preference. Choices are
-.BR avc ,
-.BR hevc , and
-.BR av1 .
-Repeat the option to provide a preference order.
-.TP
-.BI \--audio-language " LANGUAGE"
-Prefer the specified Bilibili audio language code.
-.TP
-.B \--hdr
-Prefer HDR video when available.
-.TP
-.B \--no-subtitles
-Do not save or mux Bilibili subtitles.
-.TP
-.B \--no-cover
-Do not save the Bilibili cover image.
-.TP
-.B \--save-danmaku
-Save the Bilibili danmaku XML file.
-.TP
-.B \--no-chapters
-Do not write Bilibili chapters.
-.TP
-.B \--no-info
-Do not save the Bilibili information JSON file.
-.TP
-.B \--keep-bilibili-tracks
-Keep the downloaded Bilibili video and audio temporary files.
 .TP
 .BI \--keyword " KEYWORD"
 Filter out segments whose URL or title contains
@@ -150,36 +102,6 @@ m3u8-downloader "https://example.com/video.m3u8" \
 .EX
 m3u8-downloader "https://example.com/master.m3u8" -o video.mp4 --variant 0
 .EE
-.SS Download a Bilibili video
-.EX
-m3u8-downloader "https://www.bilibili.com/video/BV..." \
-  --cookie "SESSDATA=..." \
-  --page 2 \
-  --quality 80 \
-  --video-codec avc \
-  --output lesson.mp4
-.EE
-.SS Save login state without copying a Cookie
-.EX
-m3u8-downloader --bilibili-login
-.EE
-.SS Download all Bilibili pages and save attachments
-.EX
-m3u8-downloader "https://www.bilibili.com/video/BV..." \
-  --all-pages \
-  --save-danmaku \
-  --output ./downloads
-.EE
-.SS Choose Bilibili codec order and disable attachments
-.EX
-m3u8-downloader "https://www.bilibili.com/video/BV..." \
-  --video-codec hevc \
-  --video-codec avc \
-  --no-subtitles \
-  --no-cover \
-  --no-chapters \
-  --no-info
-.EE
 .SS Keep downloaded segment files
 .EX
 m3u8-downloader "https://example.com/video.m3u8" \
@@ -195,8 +117,8 @@ Desktop application configuration file.
 .I /usr/share/m3u8-downloader/
 Installed application source and shared files in the Debian package.
 .SH REQUIREMENTS
-The Debian package depends on Python 3, requests, aiohttp, PyQt6, Textual, VLC,
-and FFmpeg. FFmpeg must be available for MP4 merging.
+The Debian package depends on Python 3, requests, aiohttp, PyQt6, Textual, and
+FFmpeg. FFmpeg must be available for MP4 merging.
 .SH PROJECT
 .TP
 Project homepage:

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag, for example v5.0.1
+        description: Release tag, for example v5.0.3
         required: true
-        default: v5.0.1
+        default: v5.0.3
   push:
     tags:
       - "v*"
@@ -49,7 +49,7 @@ jobs:
         working-directory: android
         env:
           CI_MAVEN_REPOS: official
-        run: gradle :app:assembleDebug -PtargetAbi=arm64-v8a --no-daemon --max-workers=1
+        run: gradle :app:assembleRelease -PtargetAbi=arm64-v8a --no-daemon --max-workers=1
       - name: Sign Android APK with the upgrade key
         env:
           M3U8_ANDROID_KEYSTORE_BASE64: ${{ secrets.M3U8_ANDROID_KEYSTORE_BASE64 }}
@@ -71,7 +71,8 @@ jobs:
             -keystore "$signing_dir/m3u8-down-release.p12" \
             -storepass "$M3U8_ANDROID_STORE_PASSWORD" \
             -alias "$M3U8_ANDROID_KEY_ALIAS" > /dev/null
-          apk="$GITHUB_WORKSPACE/android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk"
+          apk="$(find "$GITHUB_WORKSPACE/android/app/build/outputs/apk/release" -maxdepth 1 -type f -name 'app-arm64-v8a-release*.apk' -print -quit)"
+          test -n "$apk"
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$apksigner"
           "$apksigner" sign \
@@ -101,7 +102,7 @@ jobs:
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           version="${tag#v}"
           mkdir -p dist
-          cp android/app/build/outputs/apk/debug/app-arm64-v8a-debug.apk dist/m3u8-downloader-android-arm64-v8a-debug.apk
+          cp android/app/build/outputs/apk/release/app-arm64-v8a-release*.apk dist/m3u8-downloader-android-arm64-v8a.apk
           cp "build/release/m3u8-downloader_${version}_amd64.deb" dist/
           cp "build/release/m3u8-downloader_${version}_termux_aarch64.deb" dist/
           sha256sum dist/* > dist/SHA256SUMS-linux-android.txt

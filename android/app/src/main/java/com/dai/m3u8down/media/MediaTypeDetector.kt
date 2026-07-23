@@ -2,8 +2,6 @@ package com.dai2010.m3u8down.media
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import com.dai2010.m3u8down.network.prepareBilibiliUrl
-import com.dai2010.m3u8down.network.throttleBilibiliRequest
 import java.util.Locale
 
 enum class MediaKind(val displayName: String) {
@@ -20,7 +18,6 @@ data class MediaInfo(val kind: MediaKind, val source: String = "unknown", val co
 object MediaTypeDetector {
     private val progressiveExtensions = setOf(
         ".mp4",
-        ".m4s",
         ".m4v",
         ".mov",
         ".mkv",
@@ -37,15 +34,12 @@ object MediaTypeDetector {
         ".wav",
     )
 
-    fun detect(url: String, headers: Map<String, String> = emptyMap(), client: OkHttpClient = OkHttpClient(), bilibiliCompatEnabled: Boolean = false): MediaInfo {
+    fun detect(url: String, headers: Map<String, String> = emptyMap(), client: OkHttpClient = OkHttpClient()): MediaInfo {
         val byUrl = fromUrl(url)
         if (byUrl.kind != MediaKind.UNKNOWN) return byUrl
 
-        val requestUrl = prepareBilibiliUrl(url, bilibiliCompatEnabled)
-
         runCatching {
-            val request = Request.Builder().url(requestUrl).head().applyHeaders(headers).build()
-            throttleBilibiliRequest(requestUrl)
+            val request = Request.Builder().url(url).head().applyHeaders(headers).build()
             client.newCall(request).execute().use { response ->
                 val byType = fromContentType(response.header("Content-Type").orEmpty())
                 if (byType.kind != MediaKind.UNKNOWN) return byType
@@ -53,15 +47,15 @@ object MediaTypeDetector {
         }
 
         return runCatching {
-            val request = Request.Builder().url(requestUrl).header("Range", "bytes=0-4095").applyHeaders(headers).build()
-            throttleBilibiliRequest(requestUrl)
+            val request = Request.Builder().url(url).header("Range", "bytes=0-4095").applyHeaders(headers).build()
             client.newCall(request).execute().use { response ->
                 val byType = fromContentType(response.header("Content-Type").orEmpty())
                 if (byType.kind != MediaKind.UNKNOWN) return byType
                 val stream = response.body?.byteStream() ?: return@use MediaInfo(MediaKind.UNKNOWN)
                 val buffer = ByteArray(4096)
                 val bytesRead = stream.read(buffer)
-                fromBytes(buffer, bytesRead.coerceAtLeast(0), response.header("Content-Type").orEmpty())
+                val preview = if (bytesRead > 0) String(buffer, 0, bytesRead, Charsets.UTF_8) else ""
+                fromBody(preview)
             }
         }.getOrElse { MediaInfo(MediaKind.UNKNOWN) }
     }
@@ -84,7 +78,7 @@ object MediaTypeDetector {
             normalized in setOf("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl") -> MediaInfo(MediaKind.HLS, "content-type", contentType)
             normalized == "application/dash+xml" -> MediaInfo(MediaKind.DASH, "content-type", contentType)
             normalized == "application/vnd.ms-sstr+xml" -> MediaInfo(MediaKind.SMOOTH, "content-type", contentType)
-            normalized in setOf("application/mp4", "application/fmp4") || normalized.startsWith("video/") || normalized.startsWith("audio/") -> MediaInfo(MediaKind.PROGRESSIVE, "content-type", contentType)
+            normalized.startsWith("video/") || normalized.startsWith("audio/") -> MediaInfo(MediaKind.PROGRESSIVE, "content-type", contentType)
             else -> MediaInfo(MediaKind.UNKNOWN, "content-type", contentType)
         }
     }
@@ -97,33 +91,6 @@ object MediaTypeDetector {
             preview.startsWith("<SmoothStreamingMedia") || preview.take(256).contains("<SmoothStreamingMedia") -> MediaInfo(MediaKind.SMOOTH, "body")
             else -> MediaInfo(MediaKind.UNKNOWN, "body")
         }
-    }
-
-    fun fromBytes(bytes: ByteArray, length: Int, contentType: String = ""): MediaInfo {
-        val safeLength = length.coerceIn(0, bytes.size)
-        val textInfo = fromBody(String(bytes, 0, safeLength, Charsets.UTF_8))
-        if (textInfo.kind != MediaKind.UNKNOWN) return textInfo
-        if (looksLikeProgressiveBytes(bytes, safeLength)) return MediaInfo(MediaKind.PROGRESSIVE, "body", progressiveContentType(bytes, safeLength, contentType))
-        return MediaInfo(MediaKind.UNKNOWN, "body", contentType)
-    }
-
-    private fun looksLikeProgressiveBytes(bytes: ByteArray, length: Int): Boolean {
-        if (length >= 8 && bytes.copyOfRange(4, 8).contentEquals(byteArrayOf('f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte()))) return true
-        if (length >= 4 && (bytes.copyOfRange(0, 4).contentEquals(byteArrayOf(0x1A, 0x45.toByte(), 0xDF.toByte(), 0xA3.toByte())) ||
-                bytes.copyOfRange(0, 4).contentEquals("OggS".toByteArray()) ||
-                bytes.copyOfRange(0, 4).contentEquals("RIFF".toByteArray()))) return true
-        if (length >= 3 && bytes.copyOfRange(0, 3).contentEquals("ID3".toByteArray())) return true
-        if (length >= 2 && (bytes[0].toInt() and 0xFF) == 0xFF && (bytes[1].toInt() and 0xE0) == 0xE0) return true
-        if (length >= 2 && (bytes[0].toInt() and 0xFF) == 0xFF && (bytes[1].toInt() and 0xF6) == 0xF0) return true
-        return listOf(0, 188, 376).any { it < length && (bytes[it].toInt() and 0xFF) == 0x47 }
-    }
-
-    private fun progressiveContentType(bytes: ByteArray, length: Int, contentType: String): String {
-        val normalized = contentType.substringBefore(';').trim().lowercase(Locale.ROOT)
-        if (normalized.isNotBlank() && normalized != "application/octet-stream") return contentType
-        if (length >= 8 && bytes.copyOfRange(4, 8).contentEquals(byteArrayOf('f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte()))) return "video/mp4"
-        if (listOf(0, 188, 376).any { it < length && (bytes[it].toInt() and 0xFF) == 0x47 }) return "video/mp2t"
-        return contentType
     }
 
     private fun Request.Builder.applyHeaders(headers: Map<String, String>): Request.Builder = apply {

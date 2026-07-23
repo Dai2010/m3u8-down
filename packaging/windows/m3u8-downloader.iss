@@ -1,6 +1,6 @@
 #define AppName "m3u8 Downloader"
 #ifndef AppVersion
-#define AppVersion "5.0.1"
+#define AppVersion "5.0.3"
 #endif
 #ifndef DisplayVersion
 #define DisplayVersion AppVersion

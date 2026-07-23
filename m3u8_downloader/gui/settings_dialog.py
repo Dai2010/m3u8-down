@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
     QComboBox,
@@ -25,18 +24,14 @@ from PyQt6.QtWidgets import (
 
 from .. import __version__
 from ..config.manager import delete_profile, new_profile, save_profiles, upsert_profile
-from ..config.theme import THEME_OPTIONS, normalize_button_color, normalize_theme
+from ..config.theme import THEME_OPTIONS, normalize_button_color
 
 
 class SettingsDialog(QDialog):
-    theme_preview_requested = pyqtSignal(str)
-    bilibili_login_requested = pyqtSignal()
-
     def __init__(self, config: dict, profiles: list[dict] | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("设置")
         self._config = config.copy()
-        self._initial_theme = normalize_theme(config.get("theme", "system"))
         self.profiles = [profile.copy() for profile in (profiles or [])] or [new_profile("默认配置")]
 
         self.threads = QSpinBox()
@@ -54,17 +49,6 @@ class SettingsDialog(QDialog):
         headers = config.get("headers", {})
         self.referer = QLineEdit(headers.get("Referer", ""))
         self.user_agent = QLineEdit(headers.get("User-Agent", ""))
-        self.bilibili_cookie = QLineEdit(str(config.get("bilibili_cookie", "")))
-        self.bilibili_cookie.setEchoMode(QLineEdit.EchoMode.Password)
-        self.bilibili_login_button = QPushButton("二维码登录")
-        self.bilibili_login_button.clicked.connect(self.bilibili_login_requested.emit)
-        self.bilibili_login_status = QLabel("登录后自动保存 Cookie")
-        bilibili_login_row = QHBoxLayout()
-        bilibili_login_row.addWidget(self.bilibili_login_button)
-        bilibili_login_row.addWidget(self.bilibili_login_status)
-        self.bilibili_qr = QLabel()
-        self.bilibili_qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bilibili_qr.setVisible(False)
 
         self.keywords = QTextEdit("\n".join(config.get("filter_keywords", [])))
         self.keywords.setFixedHeight(96)
@@ -73,10 +57,6 @@ class SettingsDialog(QDialog):
         self.theme.addItems(THEME_OPTIONS)
         index = self.theme.findText(str(config.get("theme", "system")))
         self.theme.setCurrentIndex(max(0, index))
-        self.theme.currentTextChanged.connect(self._preview_current_theme)
-        self.theme.view().setMouseTracking(True)
-        self.theme.view().entered.connect(self._preview_hovered_theme)
-        self.theme.view().viewport().installEventFilter(self)
 
         self.button_color = QLineEdit(str(config.get("button_color", "")))
         self.button_color.setPlaceholderText("默认主题色，或 #146C5A")
@@ -97,9 +77,6 @@ class SettingsDialog(QDialog):
         general_form.addRow("保存目录", save_dir_row)
         general_form.addRow("Referer", self.referer)
         general_form.addRow("User-Agent", self.user_agent)
-        general_form.addRow("B 站 Cookie", self.bilibili_cookie)
-        general_form.addRow("B 站登录", bilibili_login_row)
-        general_form.addRow("登录二维码", self.bilibili_qr)
         general_form.addRow("过滤关键词", self.keywords)
 
         self.appearance_tab = QWidget()
@@ -126,25 +103,6 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
         self._refresh_profiles(0)
 
-    def set_bilibili_login_status(self, message: str, enabled: bool | None = None) -> None:
-        self.bilibili_login_status.setText(message)
-        if enabled is not None:
-            self.bilibili_login_button.setEnabled(enabled)
-
-    def set_bilibili_qr(self, path: str) -> None:
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            self.bilibili_qr.clear()
-            self.bilibili_qr.setVisible(False)
-            return
-        self.bilibili_qr.setPixmap(pixmap.scaled(
-            240,
-            240,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        ))
-        self.bilibili_qr.setVisible(True)
-
     def config(self) -> dict:
         config = self._config.copy()
         config["threads"] = self.threads.value()
@@ -153,7 +111,6 @@ class SettingsDialog(QDialog):
             "Referer": self.referer.text().strip(),
             "User-Agent": self.user_agent.text().strip(),
         }
-        config["bilibili_cookie"] = self.bilibili_cookie.text().strip()
         config["filter_keywords"] = [line.strip() for line in self.keywords.toPlainText().splitlines() if line.strip()]
         config["theme"] = self.theme.currentText()
         config["button_color"] = normalize_button_color(self.button_color.text())
@@ -163,22 +120,6 @@ class SettingsDialog(QDialog):
         self._save_current_profile()
         self._config = save_profiles(self.profiles, self.config())
         super().accept()
-
-    def reject(self) -> None:
-        self.theme_preview_requested.emit(self._initial_theme)
-        super().reject()
-
-    def eventFilter(self, watched, event) -> bool:
-        if watched is self.theme.view().viewport() and event.type() == QEvent.Type.Leave:
-            self.theme_preview_requested.emit(self.theme.currentText())
-        return super().eventFilter(watched, event)
-
-    def _preview_current_theme(self, theme: str) -> None:
-        self.theme_preview_requested.emit(theme)
-
-    def _preview_hovered_theme(self, index) -> None:
-        if index.isValid():
-            self.theme_preview_requested.emit(self.theme.itemText(index.row()))
 
     def _choose_save_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "选择保存目录", self.save_dir.text())
