@@ -66,7 +66,10 @@ class DownloadManager(
                 DirectDownloader(client, requestHeaders, effectiveBilibiliCompat, preserveBilibiliMediaUrl = true).download(stream.audio.url, audioFile, stream.audio.backupUrls)
             }
             emit(DownloadProgress(2, 2, "正在合并 B 站音视频"))
-            check(Merger.mergeBilibiliTracks(videoFile, audioFile, outputFile)) { "B 站音视频合并失败" }
+            val mergeResult = Merger.mergeBilibiliTracks(videoFile, audioFile, outputFile)
+            check(mergeResult.success) {
+                "B 站音视频合并失败：${mergeResult.category.name.lowercase()}，FFmpeg ${mergeResult.returnCode ?: "unknown"}，${mergeResult.diagnostics}"
+            }
             emit(DownloadProgress(2, 2, "已保存 ${outputFile.absolutePath}"))
             return@flow
         }

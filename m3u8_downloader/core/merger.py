@@ -54,11 +54,12 @@ def merge_bilibili_tracks(
     metadata: Mapping[str, object] | None = None,
     ffmpeg_path: str = "ffmpeg",
 ) -> bool:
-    if not video_path.exists():
-        raise MergeError("B 站视频轨道不存在")
-    if audio_path is not None and not audio_path.exists():
-        raise MergeError("B 站音频轨道不存在")
+    _validate_media_input(video_path, "视频")
+    if audio_path is not None:
+        _validate_media_input(audio_path, "音频")
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_output = output_path.with_name(f"{output_path.name}.part")
+    temporary_output.unlink(missing_ok=True)
     subtitle_items = subtitles or []
     chapter_path: Path | None = None
     command = [ffmpeg_path, "-y", "-i", str(video_path)]
@@ -106,13 +107,31 @@ def merge_bilibili_tracks(
         command.extend(["-metadata", f"comment={description}"])
     if chapter_input_index >= 0:
         command.extend(["-map_chapters", str(chapter_input_index)])
-    command.extend(["-movflags", "faststart", "-strict", "unofficial", "-strict", "-2", "-f", "mp4"])
-    command.append(str(output_path))
+    command.extend(["-movflags", "faststart", "-f", "mp4"])
+    command.append(str(temporary_output))
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise MergeError(result.stderr.strip() or "B 站音视频合并失败")
+        if not _is_valid_mp4(temporary_output):
+            raise MergeError("FFmpeg 返回成功，但输出 MP4 不可探测")
+        temporary_output.replace(output_path)
         return True
     finally:
         if chapter_path is not None:
             chapter_path.unlink(missing_ok=True)
+        temporary_output.unlink(missing_ok=True)
+
+
+def _validate_media_input(path: Path, label: str) -> None:
+    if not path.is_file() or not path.stat().st_size:
+        raise MergeError(f"B 站{label}轨道不存在、不可读或为空")
+    prefix = path.read_bytes()[:256].decode("utf-8", errors="ignore").lstrip().lower()
+    if prefix.startswith(("<html", "<!doctype", "{", "[")):
+        raise MergeError(f"B 站{label}轨道疑似 HTTP 错误页")
+
+
+def _is_valid_mp4(path: Path) -> bool:
+    if not path.is_file() or path.stat().st_size < 12:
+        return False
+    return b"ftyp" in path.read_bytes()[:128]

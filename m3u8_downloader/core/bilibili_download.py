@@ -170,6 +170,7 @@ def _download_track(
         bilibili_compat=True,
         retries=options.retries,
         backup_urls=track.backup_urls,
+        preserve_bilibili_media_url=True,
     )
 
 

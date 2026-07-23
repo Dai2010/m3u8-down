@@ -7,6 +7,7 @@ from m3u8_downloader.core.bilibili import (
     BilibiliPage,
     BilibiliSelectionPolicy,
     BilibiliTrack,
+    bilibili_media_url_variants,
     build_bilibili_headers,
     is_bilibili_url,
     is_bilibili_page_url,
@@ -80,7 +81,12 @@ def test_bilibili_request_adds_headers_and_converts_cdn_to_http():
     url, headers = prepare_bilibili_request("https://xy123.bilivideo.com/video.m4s?token=secret")
 
     assert url == "http://xy123.bilivideo.com/video.m4s?token=secret"
-    assert headers == {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"}
+    assert headers == {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://www.bilibili.com",
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+    }
 
 
 def test_bilibili_request_preserves_android_platform_and_mcdn_port():
@@ -91,9 +97,18 @@ def test_bilibili_request_preserves_android_platform_and_mcdn_port():
     mcdn_request, mcdn_headers = prepare_bilibili_request(mcdn_url)
 
     assert android_request == android_url.replace("https://", "http://")
-    assert android_headers == {"User-Agent": "Mozilla/5.0"}
+    assert android_headers == {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+    }
     assert mcdn_request == mcdn_url
-    assert mcdn_headers == {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com"}
+    assert mcdn_headers == {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://www.bilibili.com",
+        "Accept": "*/*",
+        "Accept-Encoding": "identity",
+    }
 
 
 def test_bilibili_request_keeps_https_for_cmcc_cdn():
@@ -104,7 +119,18 @@ def test_bilibili_request_keeps_https_for_cmcc_cdn():
     assert request_url == url
 
 
-def test_bilibili_track_prefers_backup_without_explicit_port():
+def test_bilibili_media_url_variants_preserve_signed_query():
+    url = "https://upos-sz-mirrorhwb.bilivideo.com/video.m4s?token=secret"
+
+    assert bilibili_media_url_variants(url) == (
+        url,
+        "http://upos-sz-mirrorhwb.bilivideo.com/video.m4s?token=secret",
+        "https://upos-sz-mirrorcoso1.bilivideo.com/video.m4s?token=secret",
+        "http://upos-sz-mirrorcoso1.bilivideo.com/video.m4s?token=secret",
+    )
+
+
+def test_bilibili_track_preserves_signed_primary_and_backup_urls():
     tracks = _parse_tracks(
         [{
             "baseUrl": "https://upos-sz-mirrorali.bilivideo.com:443/video.m4s",
@@ -115,8 +141,8 @@ def test_bilibili_track_prefers_backup_without_explicit_port():
         "video",
     )
 
-    assert tracks[0].url == "https://upos-sz-mirrorali.bilivideo.com/video.m4s"
-    assert tracks[0].backup_urls == ("https://upos-sz-mirrorcoso1.bilivideo.com/video.m4s",)
+    assert tracks[0].url == "https://upos-sz-mirrorali.bilivideo.com:443/video.m4s"
+    assert tracks[0].backup_urls == ("https://upos-sz-mirrorali.bilivideo.com/video.m4s",)
 
 
 def test_manual_bilibili_mode_adds_headers_without_rewriting_unrelated_urls():

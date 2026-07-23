@@ -52,7 +52,6 @@ class BilibiliResolverException(
 
 object BilibiliStreamResolver {
     private const val API_HOST = "api.bilibili.com"
-    private const val BACKUP_HOST = "upos-sz-mirrorcoso1.bilivideo.com"
     private const val WBI_KEY_TTL_MS = 10 * 60 * 1000L
     private val mixinKeyEncTab = intArrayOf(
         46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
@@ -236,9 +235,8 @@ object BilibiliStreamResolver {
                         }
                     }
                 }
-                val preferredUrl = sourceUrls.firstOrNull { !hasExplicitPort(it) } ?: sourceUrls.first()
-                val selectedUrl = replacePcdnHost(preferredUrl)
-                val backupUrls = sourceUrls.filter { it != preferredUrl }.map(::replacePcdnHost)
+                val selectedUrl = sourceUrls.first()
+                val backupUrls = sourceUrls.drop(1)
                 add(
                     BilibiliDashTrack(
                         url = selectedUrl,
@@ -270,13 +268,6 @@ object BilibiliStreamResolver {
         13 -> 1
         else -> 0
     }
-
-    private fun hasExplicitPort(url: String): Boolean = runCatching { Uri.parse(url).port != -1 }.getOrDefault(false)
-
-    private fun replacePcdnHost(url: String): String = runCatching {
-        val parsed = Uri.parse(url)
-        if (parsed.port == -1) url else parsed.buildUpon().authority(BACKUP_HOST).build().toString()
-    }.getOrDefault(url)
 
     private fun fetchJson(
         client: OkHttpClient,

@@ -84,6 +84,14 @@ def is_bilibili_url(url: str) -> bool:
     return any(host == suffix or host.endswith(f".{suffix}") for suffix in BILIBILI_HOST_SUFFIXES)
 
 
+def _is_bilibili_media_url(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    return is_bilibili_url(url) and (parsed.path or "").lower().endswith(".m4s")
+
+
 class _BilibiliRequestLimiter:
     def __init__(self):
         self._lock = Lock()
@@ -123,6 +131,11 @@ def prepare_bilibili_request(
         request_headers["User-Agent"] = "Mozilla/5.0"
     if not _uses_android_platform(url) and not _has_header(request_headers, "Referer"):
         request_headers["Referer"] = DEFAULT_BILIBILI_REFERER
+    if _is_bilibili_media_url(url):
+        if not _has_header(request_headers, "Accept"):
+            request_headers["Accept"] = "*/*"
+        if not _has_header(request_headers, "Accept-Encoding"):
+            request_headers["Accept-Encoding"] = "identity"
     if cookie and not _has_header(request_headers, "Cookie"):
         request_headers["Cookie"] = cookie
 
@@ -130,6 +143,24 @@ def prepare_bilibili_request(
     if parsed.scheme.lower() == "https" and _is_bilivideo_host(parsed.hostname) and not _keep_https_for_host(parsed):
         return urlunsplit(("http", parsed.netloc, parsed.path, parsed.query, parsed.fragment)), request_headers
     return url, request_headers
+
+
+def bilibili_media_url_variants(url: str) -> tuple[str, ...]:
+    if not _is_bilibili_media_url(url):
+        return (url,)
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return (url,)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    variants = [url]
+    if parsed.scheme.lower() == "https" and _should_try_http(host, url):
+        variants.append(urlunsplit(("http", parsed.netloc, parsed.path, parsed.query, parsed.fragment)))
+    if host.startswith("upos-sz-") and host != BILIBILI_BACKUP_HOST:
+        variants.append(urlunsplit((parsed.scheme, BILIBILI_BACKUP_HOST, parsed.path, parsed.query, parsed.fragment)))
+        if parsed.scheme.lower() == "https" and _should_try_http(BILIBILI_BACKUP_HOST, url):
+            variants.append(urlunsplit(("http", BILIBILI_BACKUP_HOST, parsed.path, parsed.query, parsed.fragment)))
+    return tuple(dict.fromkeys(variants))
 
 
 class BilibiliRequestError(RuntimeError):
@@ -545,13 +576,8 @@ def _parse_tracks(raw_tracks: Any, track_type: str) -> list[BilibiliTrack]:
         backups = item.get("backup_url") or item.get("backupUrl") or []
         backup_urls = tuple(str(value) for value in backups if value) if isinstance(backups, list) else ()
         source_urls = tuple(dict.fromkeys((base_url, *backup_urls)))
-        preferred_url = next((candidate for candidate in source_urls if not _has_explicit_port(candidate)), source_urls[0])
-        url = _replace_pcdn_host(preferred_url)
-        backup_urls = tuple(
-            _replace_pcdn_host(candidate)
-            for candidate in source_urls
-            if candidate != preferred_url
-        )
+        url = source_urls[0]
+        backup_urls = source_urls[1:]
         tracks.append(
             BilibiliTrack(
                 url=url,
@@ -705,6 +731,15 @@ def _keep_https_for_host(parsed) -> bool:
     except ValueError:
         port = None
     return ("-cmcc" in host) or (host.endswith(".mcdn.bilivideo.cn") and port is not None)
+
+
+def _should_try_http(host: str, url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        port = None
+    return "-cmcc" not in host and not _uses_android_platform(url) and not (host.endswith(".mcdn.bilivideo.cn") and port is not None)
 
 
 def _has_explicit_port(url: str) -> bool:
