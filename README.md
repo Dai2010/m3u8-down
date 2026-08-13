@@ -35,7 +35,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
-*注：requirements.txt需要克隆仓库后在仓库内执行`pip install -r requirements.txt`。我们会在后期的更新中修复这个问题。很抱歉给您带来了不便。
+*注：requirements.txt需要克隆仓库后在仓库内执行`pip install -r requirements.txt`。我们会在后期的更新中修复这个问题。很抱歉给您带来了不便。*
 
 命令行下载：
 
