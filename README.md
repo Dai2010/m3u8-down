@@ -1,5 +1,7 @@
 # m3u8-downloader
 
+**注意！我们只是提供一个下载器，使用时请严格遵守您所在国家/地区网络媒体信息传播的相关规定！我们不会承担因使用本软件所造成的法律问题！**
+
 自研 m3u8 下载、合并与去广告流播工具，覆盖 Linux、Windows、Termux 和 Android。项目核心目标是把 m3u8 播放列表解析、广告片段过滤、分片并发下载、MP4 合并和本地流播代理做成一套可控、可扩展的实现，而不是依赖在线解析服务。
 
 桌面端使用 Python 实现，提供 CLI、PyQt6 GUI 和 Textual TUI。Android 端使用 Kotlin、Jetpack Compose 和 Media3/ExoPlayer 实现，包名为 `com.dai2010.m3u8down`，最低支持 Android 10。
@@ -33,6 +35,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
+*注：requirements.txt需要克隆仓库后在仓库内执行`pip install -r requirements.txt`。我们会在后期的更新中修复这个问题。很抱歉给您带来了不便。
 
 命令行下载：
 
