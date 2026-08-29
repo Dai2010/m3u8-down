@@ -2,6 +2,8 @@
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <?ifndef AppVersion ?><?define AppVersion = "5.0.3" ?><?endif ?>
   <?ifndef LicenseRtf ?><?define LicenseRtf = "dist\GPL-3.0.rtf" ?><?endif ?>
+  <?ifndef SourceFfmpegExe ?><?define SourceFfmpegExe = "dist\ffmpeg.exe" ?><?endif ?>
+  <?ifndef SourceFfmpegLicense ?><?define SourceFfmpegLicense = "dist\ffmpeg-license.txt" ?><?endif ?>
   <Product Id="*" Name="m3u8 Downloader" Language="1033" Version="$(var.AppVersion)" Manufacturer="Dai2010" UpgradeCode="5b35b64b-04c8-43bb-baf7-cf3856cba0cc">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Description="m3u8 Downloader Windows installer - GPL License v3.0" Comments="Distributed under the GNU General Public License version 3.0." />
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of m3u8 Downloader is already installed." />
@@ -28,6 +30,10 @@
           <Component Id="AppIconFileComponent" Guid="84ddc9de-f8bc-4f69-91e3-82c4a34cb54b">
             <File Id="InstalledAppIcon" Source="$(var.IconFile)" Name="m3u8-downloader.ico" KeyPath="yes" />
           </Component>
+          <Component Id="FfmpegRuntimeComponent" Guid="c5d7c08d-6a12-4d66-9f7e-7ca4d3a9a9c0">
+            <File Id="FfmpegExecutable" Source="$(var.SourceFfmpegExe)" KeyPath="yes" />
+            <File Id="FfmpegLicense" Source="$(var.SourceFfmpegLicense)" />
+          </Component>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
@@ -47,6 +53,7 @@
       <ComponentRef Id="ApplicationFiles" />
       <ComponentRef Id="PathEnvironment" />
       <ComponentRef Id="AppIconFileComponent" />
+      <ComponentRef Id="FfmpegRuntimeComponent" />
       <ComponentRef Id="StartMenuShortcutComponent" />
     </Feature>
   </Product>

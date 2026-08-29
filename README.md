@@ -33,9 +33,16 @@
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install .
 ```
-*注：requirements.txt需要克隆仓库后在仓库内执行`pip install -r requirements.txt`。我们会在后期的更新中修复这个问题。很抱歉给您带来了不便。*
+
+项目安装会自动安装运行所需的 Python 依赖，并注册 `m3u8-downloader`、`m3u8-downloader-gui` 和 `m3u8-downloader-tui` 命令。也可以直接从 GitHub 安装，无需手动下载或进入仓库目录：
+
+```bash
+python -m pip install "m3u8-downloader @ git+https://github.com/Dai2010/m3u8-down.git"
+```
+
+`requirements.txt` 仅用于开发和运行测试，不是普通用户的安装步骤。
 
 命令行下载：
 
@@ -70,7 +77,7 @@ python -m m3u8_downloader --tui
 桌面 GUI：
 
 ```bash
-pip install -r requirements-desktop.txt
+python -m pip install ".[desktop]"
 python -m m3u8_downloader.gui.app
 ```
 
@@ -86,7 +93,7 @@ HLS 流播代理会输出本地播放地址，可复制到 mpv 或 VLC；非 HLS
 http://127.0.0.1:8888/stream.m3u8?src=...
 ```
 
-桌面端需要系统已安装 FFmpeg：
+从源码运行桌面端时需要系统已安装 FFmpeg；Windows 安装包已包含 FFmpeg，Linux 和 Termux 安装包会由包管理器自动安装：
 
 ```bash
 sudo apt install ffmpeg
@@ -119,7 +126,7 @@ m3u8-downloader-gui
 m3u8-downloader-tui
 ```
 
-Windows 程序使用 PyInstaller 打包。下载合并仍依赖 FFmpeg，使用下载功能时需要系统 PATH 中可找到 `ffmpeg`。
+Windows 程序使用 PyInstaller 打包，Python 运行时和项目依赖已包含在 `.exe`、`.msi` 安装包中；FFmpeg 也会随 Windows 安装包安装。最终用户无需安装 Python、FFmpeg、GitHub CLI 或 winget，也不需要 GitHub 账号。源码运行时仍需要单独安装 FFmpeg。
 
 ## 配置
 

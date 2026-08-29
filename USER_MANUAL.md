@@ -26,7 +26,7 @@ python -m m3u8_downloader "https://example.com/video/movie.mp4" -o movie.mp4
 
 ## GUI 和 TUI
 
-安装 `requirements-desktop.txt` 后运行 `python -m m3u8_downloader.gui.app` 启动 GUI；运行 `python -m m3u8_downloader.tui.app` 启动 TUI。无 URL 运行 CLI 也会进入 TUI。
+使用源码运行时，执行 `python -m pip install ".[desktop]"` 安装桌面端依赖，再运行 `python -m m3u8_downloader.gui.app` 启动 GUI；运行 `python -m m3u8_downloader.tui.app` 启动 TUI。无 URL 运行 CLI 也会进入 TUI。Windows 安装包已包含 Python 依赖和 FFmpeg。
 
 ## Android
 

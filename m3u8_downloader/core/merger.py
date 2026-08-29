@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from .utils import resolve_ffmpeg
+
 
 class MergeError(RuntimeError):
     """Raised when ffmpeg fails to merge downloaded segments."""
@@ -22,7 +24,7 @@ def merge_to_mp4(ts_files: list[Path], output_path: Path, ffmpeg_path: str = "ff
 
     try:
         command = [
-            ffmpeg_path,
+            resolve_ffmpeg(ffmpeg_path),
             "-y",
             "-f",
             "concat",

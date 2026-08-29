@@ -44,6 +44,8 @@ ChangesEnvironment=yes
 Source: "{#SourceDir}\m3u8-downloader-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\m3u8-downloader.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\m3u8-downloader-tui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\ffmpeg-license.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#IconFile}"; DestDir: "{app}"; DestName: "m3u8-downloader.ico"; Flags: ignoreversion
 
 [Icons]

@@ -128,6 +128,12 @@ jobs:
         run: pyinstaller --name m3u8-downloader --onefile --console --paths . --collect-submodules m3u8_downloader --collect-submodules qrcode --collect-submodules textual --hidden-import m3u8_downloader.tui.app --icon packaging/assets/m3u8-downloader.ico m3u8_downloader/cli_launcher.py
       - name: Build TUI executable
         run: pyinstaller --name m3u8-downloader-tui --onefile --console --paths . --collect-submodules m3u8_downloader --collect-submodules qrcode --collect-submodules textual --hidden-import m3u8_downloader.tui.app --icon packaging/assets/m3u8-downloader.ico m3u8_downloader/tui/launcher.py
+      - name: Download FFmpeg runtime
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./packaging/windows/download_ffmpeg.ps1 -OutputDirectory dist
       - name: Install Windows installer tools
         run: choco install wixtoolset innosetup --no-progress -y
       - name: Prepare release metadata and license
@@ -167,7 +173,7 @@ jobs:
       - name: Build msi
         shell: cmd
         run: |
-          candle -dAppVersion=%APP_VERSION% -dSourceGuiExe=dist\m3u8-downloader-gui.exe -dSourceCliExe=dist\m3u8-downloader.exe -dSourceTuiExe=dist\m3u8-downloader-tui.exe -dIconFile=packaging\assets\m3u8-downloader.ico -dLicenseRtf=dist\GPL-3.0.rtf packaging\windows\m3u8-downloader.wxs -out dist\m3u8-downloader.wixobj
+          candle -dAppVersion=%APP_VERSION% -dSourceGuiExe=dist\m3u8-downloader-gui.exe -dSourceCliExe=dist\m3u8-downloader.exe -dSourceTuiExe=dist\m3u8-downloader-tui.exe -dSourceFfmpegExe=dist\ffmpeg.exe -dSourceFfmpegLicense=dist\ffmpeg-license.txt -dIconFile=packaging\assets\m3u8-downloader.ico -dLicenseRtf=dist\GPL-3.0.rtf packaging\windows\m3u8-downloader.wxs -out dist\m3u8-downloader.wixobj
           light -ext WixUIExtension -out dist\m3u8-downloader-%ASSET_VERSION%-windows-x64.msi dist\m3u8-downloader.wixobj
       - name: Collect Windows artifacts
         shell: bash

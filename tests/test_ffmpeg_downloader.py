@@ -1,4 +1,5 @@
 from m3u8_downloader.core.ffmpeg_downloader import download_with_ffmpeg
+from m3u8_downloader.core.utils import resolve_ffmpeg
 
 
 def test_download_with_ffmpeg_passes_headers(tmp_path, monkeypatch):
@@ -23,3 +24,13 @@ def test_download_with_ffmpeg_passes_headers(tmp_path, monkeypatch):
     assert "-headers" in command
     assert "Referer: https://example.com\r\n" in command
     assert command[-3:] == ["-c", "copy", str(output)]
+
+
+def test_resolve_ffmpeg_finds_installed_windows_runtime(tmp_path, monkeypatch):
+    executable = tmp_path / "m3u8-downloader.exe"
+    executable.touch()
+    bundled_ffmpeg = executable.parent / "ffmpeg.exe"
+    bundled_ffmpeg.touch()
+    monkeypatch.setattr("m3u8_downloader.core.utils.sys.executable", str(executable))
+
+    assert resolve_ffmpeg() == str(bundled_ffmpeg)

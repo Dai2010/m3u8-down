@@ -29,7 +29,7 @@ Description: m3u8 downloader and ad-filtering streamer
 CONTROL
 
 cp -a "$ROOT/m3u8_downloader" "$DEB_ROOT/usr/share/m3u8-downloader/"
-cp "$ROOT/README.md" "$ROOT/setup.py" "$ROOT/requirements.txt" "$ROOT/requirements-desktop.txt" "$DEB_ROOT/usr/share/m3u8-downloader/"
+cp "$ROOT/README.md" "$ROOT/pyproject.toml" "$ROOT/setup.py" "$ROOT/requirements.txt" "$ROOT/requirements-desktop.txt" "$DEB_ROOT/usr/share/m3u8-downloader/"
 cp "$ROOT/packaging/linux/m3u8-downloader.desktop" "$DEB_ROOT/usr/share/applications/"
 gzip -9c "$ROOT/packaging/linux/m3u8-downloader.1" > "$DEB_ROOT/usr/share/man/man1/m3u8-downloader.1.gz"
 

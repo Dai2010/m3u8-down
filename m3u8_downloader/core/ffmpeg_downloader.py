@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from .utils import resolve_ffmpeg
+
 
 class FFmpegDownloadError(RuntimeError):
     """Raised when FFmpeg cannot save the input media."""
@@ -10,7 +12,7 @@ class FFmpegDownloadError(RuntimeError):
 
 def download_with_ffmpeg(url: str, output_path: Path, headers: dict[str, str] | None = None, ffmpeg_path: str = "ffmpeg") -> bool:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [ffmpeg_path, "-y"]
+    command = [resolve_ffmpeg(ffmpeg_path), "-y"]
     header_block = _headers_for_ffmpeg(headers or {})
     if header_block:
         command.extend(["-headers", header_block])

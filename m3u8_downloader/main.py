@@ -104,7 +104,7 @@ def _launch_tui() -> None:
         from .tui.app import main as tui_main
     except ImportError as exc:
         raise SystemExit(
-            "TUI dependencies are not installed; install requirements-desktop.txt or pass a URL to run CLI download."
+            'TUI dependencies are not installed; install the project with "python -m pip install ." or pass a URL to run CLI download.'
         ) from exc
     tui_main()
 
